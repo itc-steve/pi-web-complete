@@ -1,0 +1,74 @@
+{
+  "name": "@itc-steve/pi-web-complete",
+  "version": "1.0.0",
+  "description": "Pi extension: multi-backend web_search, local web_read with query-ranked excerpts, and web_cowork shared browser control.",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "web-search",
+    "web-read",
+    "web-cowork",
+    "cloakbrowser"
+  ],
+  "author": {
+    "name": "itc-steve",
+    "url": "https://github.com/itc-steve"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/itc-steve/pi-web-complete.git"
+  },
+  "bugs": {
+    "url": "https://github.com/itc-steve/pi-web-complete/issues"
+  },
+  "homepage": "https://github.com/itc-steve/pi-web-complete#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "files": [
+    "src",
+    "types",
+    "search.json.example",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "postinstall": "cloakbrowser install"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "cloakbrowser": "^0.4.11",
+    "impit": "^0.14.1",
+    "linkedom": "^0.18.12",
+    "playwright-core": "^1.60.0",
+    "turndown": "^7.2.4",
+    "turndown-plugin-gfm": "^1.0.2",
+    "typebox": "^1.1.24",
+    "undici": "^8.4.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/turndown": "^5.0.6",
+    "typescript": "^5.8.0"
+  }
+}

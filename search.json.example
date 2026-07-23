@@ -1,0 +1,31 @@
+{
+  "defaultBackend": "auto",
+  "compact": false,
+  "showStatus": true,
+  "numResults": 10,
+
+  "read": {
+    "defaultMode": "auto",
+    "defaultFormat": "markdown",
+    "defaultReturn": "excerpts",
+    "onlyMainContent": true,
+    "removeImages": false,
+    "maxChars": 0,
+    "excerptMaxChars": 6000,
+    "timeoutSeconds": 30,
+    "headless": true
+  },
+
+  "cowork": {
+    "userDataDir": "~/.cloakbrowser/cowork-profile",
+    "downloadDir": "~/Downloads"
+  },
+
+  "backends": {
+    "brave":  { "enabled": false, "apiKey": "" },
+    "serper": { "enabled": false, "apiKey": "" },
+    "tavily": { "enabled": false, "apiKey": "" },
+    "exa":    { "enabled": false, "apiKey": "" },
+    "linkup": { "enabled": false, "apiKey": "", "depth": "standard" }
+  }
+}
