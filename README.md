@@ -83,6 +83,8 @@ Auto mode shuffles **enabled backends that have an `apiKey`**: random primary, t
 
 Also follows short client-side meta-refresh redirects (≤10s delay, max 5 hops) and surfaces page metadata when available: **author**, **published**, **site**, **language**.
 
+**GitHub issues / PRs** (`github.com/{owner}/{repo}/issues|pull/{n}`) are fetched via the **GitHub REST API** (`mode: github-api`) instead of HTML — bodies and comments come through cleanly. Optional `GITHUB_TOKEN` / `GH_TOKEN` for private repos and higher rate limits. Force HTML/browser with `mode: "browser"`.
+
 Toggle a visible browser window for one-shot `web_read` via config or tool param:
 
 ```json

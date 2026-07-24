@@ -12,6 +12,7 @@ import {
 	parsePageMeta,
 	type PageMeta,
 } from "./hints.js";
+import { tryReadGitHubIssue } from "./github.js";
 
 export interface ReadOptions {
 	mode?: ReadMode;
@@ -313,6 +314,17 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 		signal,
 	};
 	const browserOpts = { signal, timeoutMs, headless };
+
+	// GitHub issues/PRs: REST API beats HTML chrome (unless mode=browser forces render).
+	if (mode !== "browser") {
+		const gh = await tryReadGitHubIssue(url, {
+			format,
+			maxChars: options.maxChars,
+			timeoutMs,
+			signal,
+		});
+		if (gh) return gh;
+	}
 
 	if (mode === "browser") {
 		const rendered = await renderWithCloakBrowser(url, browserOpts);
