@@ -1,6 +1,6 @@
 {
   "name": "@itc-steve/pi-web-complete",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Pi extension: multi-backend web_search, local web_read with query-ranked excerpts, and web_cowork shared browser control.",
   "keywords": [
     "pi-package",
@@ -31,7 +31,8 @@
   "files": [
     "src",
     "types",
-    "search.json.example",
+    "web.json.example",
+    "web.env.example",
     "README.md",
     "LICENSE"
   ],

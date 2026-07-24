@@ -4,7 +4,11 @@ npm-debug.log*
 .DS_Store
 .env
 .env.*
+web.json
+web.env
 search.json
+.pi/web.json
+.pi/web.env
 .pi/search.json
 *.pem
 .idea/

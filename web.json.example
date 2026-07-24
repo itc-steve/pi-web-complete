@@ -22,10 +22,10 @@
   },
 
   "backends": {
-    "brave":  { "enabled": false, "apiKey": "" },
-    "serper": { "enabled": false, "apiKey": "" },
-    "tavily": { "enabled": false, "apiKey": "" },
-    "exa":    { "enabled": false, "apiKey": "" },
-    "linkup": { "enabled": false, "apiKey": "", "depth": "standard" }
+    "brave":  { "enabled": false, "apiKeyEnv": "BRAVE_API_KEY" },
+    "serper": { "enabled": false, "apiKeyEnv": "SERPER_API_KEY" },
+    "tavily": { "enabled": false, "apiKeyEnv": "TAVILY_API_KEY" },
+    "exa":    { "enabled": false, "apiKeyEnv": "EXA_API_KEY" },
+    "linkup": { "enabled": false, "apiKeyEnv": "LINKUP_API_KEY", "depth": "standard" }
   }
 }

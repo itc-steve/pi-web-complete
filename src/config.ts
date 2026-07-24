@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { BackendConfig, BackendName, SearchConfig } from "./types.js";
 import { BACKEND_NAMES } from "./types.js";
-import { resolveBackendKey } from "./credentials.js";
+import { loadEnvFiles, resolveBackendKey } from "./credentials.js";
 import { getAgentDir } from "./utils.js";
 
 export let config: SearchConfig = {
@@ -12,49 +12,64 @@ export let config: SearchConfig = {
 	backends: {},
 };
 
+/** First existing path that parses as JSON, else null. */
+function readJsonFile(paths: string[]): Record<string, unknown> | null {
+	for (const path of paths) {
+		if (!existsSync(path)) continue;
+		try {
+			return JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
+		} catch {
+			// ignore bad JSON; try next candidate
+		}
+	}
+	return null;
+}
+
 function loadConfig(cwd: string): SearchConfig {
-	const globalPath = join(getAgentDir(), "extensions", "search.json");
-	const projectPath = join(cwd, ".pi", "search.json");
+	const agentDir = getAgentDir();
+	// Prefer web.json; fall back to legacy search.json locations once.
+	const globalFile = readJsonFile([
+		join(agentDir, "web.json"),
+		join(agentDir, "extensions", "search.json"), // legacy
+	]);
+	const projectFile = readJsonFile([
+		join(cwd, ".pi", "web.json"),
+		join(cwd, ".pi", "search.json"), // legacy
+	]);
 
 	let loaded: SearchConfig = {
 		defaultBackend: "auto",
 		backends: {},
 	};
 
-	if (existsSync(globalPath)) {
-		try {
-			loaded = { ...loaded, ...JSON.parse(readFileSync(globalPath, "utf-8")) };
-		} catch {
-			// ignore
-		}
+	if (globalFile) {
+		loaded = { ...loaded, ...globalFile } as SearchConfig;
 	}
 
 	const preProjectBackends = { ...(loaded.backends ?? {}) };
 
-	if (existsSync(projectPath)) {
-		try {
-			const project = JSON.parse(readFileSync(projectPath, "utf-8"));
-			loaded = { ...loaded, ...project };
-			if (loaded.backends == null) {
-				loaded.backends = preProjectBackends;
-			}
-			if (project.backends && typeof project.backends === "object") {
-				const merged: Record<string, BackendConfig | undefined> = {
-					...preProjectBackends,
-					...loaded.backends,
-				};
-				for (const [key, val] of Object.entries(project.backends)) {
-					const bc = val as BackendConfig | undefined;
-					if (bc && merged[key]) {
-						merged[key] = { ...merged[key], ...bc };
-					} else {
-						merged[key] = bc;
-					}
+	if (projectFile) {
+		const project = projectFile;
+		loaded = { ...loaded, ...project } as SearchConfig;
+		if (loaded.backends == null) {
+			loaded.backends = preProjectBackends;
+		}
+		if (project.backends && typeof project.backends === "object") {
+			const merged: Record<string, BackendConfig | undefined> = {
+				...preProjectBackends,
+				...loaded.backends,
+			};
+			for (const [key, val] of Object.entries(
+				project.backends as Record<string, BackendConfig | undefined>,
+			)) {
+				const bc = val;
+				if (bc && merged[key]) {
+					merged[key] = { ...merged[key], ...bc };
+				} else {
+					merged[key] = bc;
 				}
-				loaded.backends = merged as SearchConfig["backends"];
 			}
-		} catch {
-			// ignore
+			loaded.backends = merged as SearchConfig["backends"];
 		}
 	}
 
@@ -125,6 +140,8 @@ export function refreshConfig(cwd: string, force = false): string[] {
 		return activeBackendsList;
 	}
 
+	// Keep web.env in sync with config force-reload (same as pi-fgt fortigate.env)
+	loadEnvFiles(cwd, force);
 	config = loadConfig(cwd);
 	configCacheTime = now;
 	configCacheCwd = cwd;

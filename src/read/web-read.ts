@@ -112,7 +112,7 @@ const webReadParameters = Type.Object({
 		Type.Boolean({
 			description:
 				"CloakBrowser window visibility. true (default) = headless; false = visible. " +
-				"Falls back to read.headless in search.json.",
+				"Falls back to read.headless in web.json.",
 			default: true,
 		}),
 	),
@@ -218,6 +218,10 @@ async function executeWebRead(
 			`Mode: ${result.mode} · Format: ${result.format} · Status: ${result.status}` +
 				(result.mode.includes("browser") ? ` · Headless: ${headless}` : ""),
 		];
+		if (result.author) headerLines.push(`Author: ${result.author}`);
+		if (result.published) headerLines.push(`Published: ${result.published}`);
+		if (result.site) headerLines.push(`Site: ${result.site}`);
+		if (result.language) headerLines.push(`Language: ${result.language}`);
 
 		if (saving) {
 			const header = [...headerLines, ""].join("\n");
@@ -252,6 +256,10 @@ async function executeWebRead(
 					status: result.status,
 					chars: result.chars,
 					title: result.title,
+					author: result.author,
+					published: result.published,
+					site: result.site,
+					language: result.language,
 					headless,
 					savePath: abs,
 					return: "full",
@@ -300,6 +308,10 @@ async function executeWebRead(
 				status: result.status,
 				chars: fullBody.length,
 				title: result.title,
+				author: result.author,
+				published: result.published,
+				site: result.site,
+				language: result.language,
 				headless,
 				return: returnDetail,
 				query: query || undefined,

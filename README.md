@@ -23,24 +23,53 @@ From a local checkout:
 pi install /path/to/pi-web-complete
 ```
 
-## Config
+## Config (two files side by side)
 
-Copy [search.json.example](./search.json.example) to:
+Same pattern as pi-fgt: JSON has no secrets; keys live in a sibling `.env` file.
 
-- Global: `~/.pi/agent/extensions/search.json`
-- Project override: `.pi/search.json` (deep-merges per backend)
+| File | Purpose |
+|------|---------|
+| `~/.pi/agent/web.json` | Defaults, enabled backends, `apiKeyEnv` **names** (no secrets) |
+| `~/.pi/agent/web.env` | Actual API keys as `KEY=value` |
+| `.pi/web.json` | Optional project override (deep-merges per backend) |
+| `.pi/web.env` | Optional project secrets (overlay global `web.env`) |
 
-Enable at least one search backend and set a literal `apiKey` (paste keys inline — no env-var or shell indirection).
+```bash
+cp /path/to/pi-web-complete/web.json.example ~/.pi/agent/web.json
+cp /path/to/pi-web-complete/web.env.example  ~/.pi/agent/web.env
+chmod 600 ~/.pi/agent/web.env
+# edit both — enable backends in JSON, paste keys in the .env
+```
+
+Legacy JSON paths still load if the new ones are missing: `~/.pi/agent/extensions/search.json` and `.pi/search.json`.
+
+### `web.json`
 
 ```json
 {
   "defaultBackend": "auto",
   "backends": {
-    "brave": { "enabled": true, "apiKey": "YOUR_BRAVE_API_KEY" },
-    "tavily": { "enabled": true, "apiKey": "YOUR_TAVILY_API_KEY" }
+    "brave":  { "enabled": true, "apiKeyEnv": "BRAVE_API_KEY" },
+    "tavily": { "enabled": true, "apiKeyEnv": "TAVILY_API_KEY" }
   }
 }
 ```
+
+### `web.env` (secrets)
+
+```bash
+BRAVE_API_KEY=your-brave-key-here
+TAVILY_API_KEY=your-tavily-key-here
+```
+
+Key resolve order (per backend `apiKeyEnv`):
+
+1. `process.env[apiKeyEnv]` (shell export wins if set)
+2. `.pi/web.env` (project)
+3. `~/.pi/agent/web.env` (global)
+4. Legacy literal `apiKey` in JSON (deprecated — still works so old configs don't break)
+
+Never put the key string in the JSON.
 
 ### Search dispatch
 
@@ -50,7 +79,9 @@ Auto mode shuffles **enabled backends that have an `apiKey`**: random primary, t
 
 ### Read behavior
 
-`web_read` `auto` mode escalates: fast HTTP → TLS-fingerprint fetch (if blocked) → Readability (if sparse) → CloakBrowser (if still thin/SPA).
+`web_read` `auto` mode escalates: fast HTTP → TLS-fingerprint fetch (if blocked) → `rel=alternate` fallback (if thin) → Readability (if sparse) → CloakBrowser (if still thin/SPA).
+
+Also follows short client-side meta-refresh redirects (≤10s delay, max 5 hops) and surfaces page metadata when available: **author**, **published**, **site**, **language**.
 
 Toggle a visible browser window for one-shot `web_read` via config or tool param:
 

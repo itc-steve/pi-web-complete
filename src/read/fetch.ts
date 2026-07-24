@@ -2,6 +2,7 @@
 
 import { fetch } from "undici";
 import { validateUrl, timeoutSignal } from "../utils.js";
+import { fetchWithMetaRefresh } from "./hints.js";
 
 export interface FetchResult {
 	url: string;
@@ -91,14 +92,16 @@ export async function readBodyCapped(
 	};
 }
 
-export async function fetchUrl(
+async function fetchUrlOnce(
 	url: string,
 	options: {
 		signal?: AbortSignal;
 		timeoutMs?: number;
 		maxBytes?: number;
 		headers?: Record<string, string>;
-	} = {},
+	},
+	/** Original request URL preserved across meta-refresh hops. */
+	originalUrl: string,
 ): Promise<FetchResult> {
 	const ssrf = validateUrl(url);
 	if (ssrf) throw new Error(ssrf);
@@ -126,7 +129,7 @@ export async function fetchUrl(
 	const { text, bytes, truncated } = await readBodyCapped(response, maxBytes);
 
 	return {
-		url,
+		url: originalUrl,
 		finalUrl,
 		status: response.status,
 		contentType,
@@ -134,4 +137,16 @@ export async function fetchUrl(
 		bytes,
 		truncated,
 	};
+}
+
+export async function fetchUrl(
+	url: string,
+	options: {
+		signal?: AbortSignal;
+		timeoutMs?: number;
+		maxBytes?: number;
+		headers?: Record<string, string>;
+	} = {},
+): Promise<FetchResult> {
+	return fetchWithMetaRefresh(url, (hop) => fetchUrlOnce(hop, options, url));
 }

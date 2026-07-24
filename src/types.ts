@@ -12,6 +12,15 @@ export const BACKEND_NAMES: readonly BackendName[] = [
 
 export interface BackendConfig {
 	enabled?: boolean;
+	/**
+	 * Env var *name* holding the API key (like pi-fgt tokenEnv).
+	 * Resolved from process.env, then ~/.pi/agent/web.env / .pi/web.env.
+	 * Never put the secret value here — only the name, e.g. "BRAVE_API_KEY".
+	 */
+	apiKeyEnv?: string;
+	/**
+	 * @deprecated Prefer apiKeyEnv + web.env. Literal key still accepted for backcompat.
+	 */
 	apiKey?: string;
 	/** Per-backend timeout override in milliseconds. Default: 30000 */
 	timeout?: number;

@@ -2,8 +2,8 @@
  * pi-web-complete — web_search (random multi-backend) + local web_read (CloakBrowser)
  * + web_cowork (shared-control visible session).
  *
- * Config: ~/.pi/agent/extensions/search.json + .pi/search.json (project wins)
- * Credentials: literal apiKey only
+ * Config: ~/.pi/agent/web.json + .pi/web.json (project wins; legacy search.json still read)
+ * Secrets:  ~/.pi/agent/web.env  + .pi/web.env  via apiKeyEnv (process.env wins; legacy apiKey ok)
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";

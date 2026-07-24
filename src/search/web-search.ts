@@ -40,7 +40,7 @@ export function registerWebSearch(pi: ExtensionAPI): void {
 		promptGuidelines: [
 			"Use web_search when you need up-to-date information, facts, or documentation from the web",
 			"Auto mode picks a random enabled backend; on failure it tries the others in random order",
-			"Configure backends in ~/.pi/agent/extensions/search.json or .pi/search.json",
+			"Configure backends in ~/.pi/agent/web.json; secrets in ~/.pi/agent/web.env via apiKeyEnv",
 			"Prefer compact=true while exploring and keep numResults modest to avoid flooding context",
 		],
 		parameters: Type.Object({
@@ -110,7 +110,7 @@ export function registerWebSearch(pi: ExtensionAPI): void {
 			const activeBackends = getActiveBackends();
 			if (activeBackends.length === 0) {
 				throw new Error(
-					"No search backends enabled with apiKey. Enable at least one in ~/.pi/agent/extensions/search.json",
+					"No search backends enabled with a resolvable key. Set apiKeyEnv in ~/.pi/agent/web.json and the value in ~/.pi/agent/web.env",
 				);
 			}
 

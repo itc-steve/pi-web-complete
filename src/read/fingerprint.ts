@@ -3,14 +3,16 @@
 import { Impit } from "impit";
 import { validateUrl, timeoutSignal } from "../utils.js";
 import { readBodyCapped, resolveMaxBytes, type FetchResult } from "./fetch.js";
+import { fetchWithMetaRefresh } from "./hints.js";
 
-export async function fingerprintFetch(
+async function fingerprintFetchOnce(
 	url: string,
 	options: {
 		signal?: AbortSignal;
 		timeoutMs?: number;
 		maxBytes?: number;
-	} = {},
+	},
+	originalUrl: string,
 ): Promise<FetchResult> {
 	const ssrf = validateUrl(url);
 	if (ssrf) throw new Error(ssrf);
@@ -37,7 +39,7 @@ export async function fingerprintFetch(
 	const { text, bytes, truncated } = await readBodyCapped(response as any, maxBytes);
 
 	return {
-		url,
+		url: originalUrl,
 		finalUrl,
 		status: response.status,
 		contentType,
@@ -45,4 +47,15 @@ export async function fingerprintFetch(
 		bytes,
 		truncated,
 	};
+}
+
+export async function fingerprintFetch(
+	url: string,
+	options: {
+		signal?: AbortSignal;
+		timeoutMs?: number;
+		maxBytes?: number;
+	} = {},
+): Promise<FetchResult> {
+	return fetchWithMetaRefresh(url, (hop) => fingerprintFetchOnce(hop, options, url));
 }

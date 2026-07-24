@@ -6,8 +6,8 @@ export const HTTP_TIMEOUT_MS = 30_000;
 export const COOLDOWN_MS = 2_000;
 
 export const MISSING_KEY_HELP =
-	"Set a literal apiKey for the backend in ~/.pi/agent/extensions/search.json " +
-	"(or project .pi/search.json).";
+	"Set apiKeyEnv in ~/.pi/agent/web.json (or .pi/web.json) and put the key in " +
+	"~/.pi/agent/web.env as NAME=value (or export it in the shell). Never put the key value in web.json.";
 
 export function getAgentDir(): string {
 	return join(process.env.HOME || process.env.USERPROFILE || "~", ".pi", "agent");
