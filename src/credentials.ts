@@ -97,3 +97,17 @@ export function resolveBackendKey(backend: string, config: SearchConfig): string
 	// legacy: literal apiKey still accepted so old web.json keeps working
 	return cleanKey(bc.apiKey);
 }
+
+/** Resolve the Context7 API key the same way (process.env → web.env → legacy literal). */
+export function resolveContext7Key(config: SearchConfig): string | undefined {
+	const c7 = config.context7;
+	if (!c7 || c7.enabled === false) return undefined;
+	const envName = typeof c7.apiKeyEnv === "string" ? c7.apiKeyEnv.trim() : "";
+	if (envName) {
+		const fromProcess = cleanKey(process.env[envName]);
+		if (fromProcess) return fromProcess;
+		const fromFile = cleanKey(envFileCache[envName]);
+		if (fromFile) return fromFile;
+	}
+	return cleanKey(c7.apiKey);
+}

@@ -9,11 +9,14 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { refreshConfig } from "./config.js";
-import { clearCooldowns } from "./utils.js";
+import { clearCooldowns, installCloakLogFilter } from "./utils.js";
 import { registerWebSearch } from "./search/web-search.js";
 import { registerWebRead } from "./read/web-read.js";
 import { closeAllBrowsers } from "./read/browser.js";
 import { registerWebCowork } from "./cowork/web-cowork.js";
+import { registerContext7 } from "./context7/context7.js";
+import { config } from "./config.js";
+import { resolveContext7Key } from "./credentials.js";
 import { closeCoworkSession } from "./cowork/session.js";
 import { resetSessionStatus } from "./status.js";
 
@@ -32,15 +35,20 @@ function wireCleanupHooks(): void {
 }
 
 export default function (pi: ExtensionAPI): void {
+	// cloakbrowser update notices via console.* would corrupt Pi's TUI rendering.
+	installCloakLogFilter();
 	registerWebSearch(pi);
 	registerWebRead(pi);
 	registerWebCowork(pi);
+	// Only expose context7 when a key is configured — no dead tool in the prompt.
+	refreshConfig(process.cwd(), true);
+	if (resolveContext7Key(config)) registerContext7(pi);
 	wireCleanupHooks();
 
 	pi.on("session_start", (_event, ctx) => {
 		clearCooldowns();
 		refreshConfig(ctx.cwd, true);
-		// Footer stays empty until search / cowork / read is actually used.
+		// Footer stays empty until a service is actually used this session.
 		resetSessionStatus(ctx.ui);
 	});
 }

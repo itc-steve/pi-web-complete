@@ -5,11 +5,11 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-
 import { config, refreshConfig } from "../config.js";
 import { setReadStatus } from "../status.js";
 import { pageOutline, selectExcerpts } from "./excerpts.js";
 import { readUrl } from "./pipeline.js";
+import { deslugify, slugifyFilename } from "./slug.js";
 import type { ReadFormat, ReadMode, ReadReturnMode } from "../types.js";
 
 /** Cap tool text returned to the model when return=full and not saving. */
@@ -36,25 +36,6 @@ function resolveUserPath(path: string, cwd: string): string {
 	}
 	const expanded = expandHome(path);
 	return isAbsolute(expanded) ? expanded : resolve(cwd, expanded);
-}
-
-function slugifyFilename(title: string | undefined, url: string): string {
-	const base =
-		(title && title.trim()) ||
-		(() => {
-			try {
-				const u = new URL(url);
-				return u.pathname.split("/").filter(Boolean).pop() || "page";
-			} catch {
-				return "page";
-			}
-		})();
-	const slug = base
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, "-")
-		.replace(/^-+|-+$/g, "")
-		.slice(0, 80);
-	return (slug || "page") + ".md";
 }
 
 const webReadParameters = Type.Object({
@@ -153,6 +134,14 @@ async function executeWebRead(
 	const saveDirRaw = typeof params.saveDir === "string" ? params.saveDir.trim() : "";
 	const saving = Boolean(savePathRaw || saveDirRaw);
 	const query = typeof params.query === "string" ? params.query.trim() : "";
+	const fragment = (() => {
+		try {
+			const u = new URL(params.url);
+			return u.hash ? u.hash.slice(1) : "";
+		} catch {
+			return "";
+		}
+	})();
 	const returnMode = (
 		saving
 			? "full"
@@ -286,6 +275,20 @@ async function executeWebRead(
 				matched = selected.matched;
 				totalChunks = selected.totalChunks;
 				pageChars = selected.pageChars;
+			} else if (fragment) {
+				const implicitQuery = deslugify(fragment);
+				if (implicitQuery) {
+					const selected = selectExcerpts(result.content, implicitQuery, {
+						maxChars: excerptBudget,
+					});
+					body = `Using fragment ${JSON.stringify(implicitQuery)} as query.\n\n${selected.text}`;
+					matched = selected.matched;
+					totalChunks = selected.totalChunks;
+					pageChars = selected.pageChars;
+				} else {
+					body = pageOutline(result.content, Math.min(800, excerptBudget));
+					pageChars = result.content.length;
+				}
 			} else {
 				body = pageOutline(result.content, Math.min(800, excerptBudget));
 				pageChars = result.content.length;
@@ -388,3 +391,5 @@ export function registerWebRead(pi: ExtensionAPI): void {
 		execute: executeWebRead,
 	});
 }
+
+

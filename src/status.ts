@@ -8,8 +8,11 @@ export interface StatusUI {
 	setStatus(key: string, status: string): void;
 }
 
-/** Backends that returned results this Pi session. */
-const usedSearchBackends = new Set<BackendName>();
+/**
+ * Services that successfully returned data this Pi session.
+ * Search backends (brave, serper, …) and context7 share one clean list.
+ */
+const usedServices = new Set<string>();
 
 function statusEnabled(): boolean {
 	return config.showStatus !== false;
@@ -17,33 +20,46 @@ function statusEnabled(): boolean {
 
 /** Clear all extension footer keys at session start. */
 export function resetSessionStatus(ui: StatusUI): void {
-	usedSearchBackends.clear();
+	usedServices.clear();
 	if (!statusEnabled()) return;
+	ui.setStatus("services", "");
+	// Clear legacy keys from older sessions / hot reload.
 	ui.setStatus("search", "");
+	ui.setStatus("context7", "");
 	ui.setStatus("cowork", "");
 	ui.setStatus("read", "");
 }
 
-/** Record a successful search backend and refresh the search footer. */
-export function noteSearchBackendUsed(ui: StatusUI, backend: BackendName): void {
-	usedSearchBackends.add(backend);
-	refreshSearchStatus(ui);
-}
-
-export function refreshSearchStatus(ui: StatusUI): void {
+/** Re-render the settled services list (sorted, names only). */
+export function refreshServicesStatus(ui: StatusUI): void {
 	if (!statusEnabled()) return;
-	if (usedSearchBackends.size === 0) {
-		ui.setStatus("search", "");
+	if (usedServices.size === 0) {
+		ui.setStatus("services", "");
 		return;
 	}
-	const list = [...usedSearchBackends].join(", ");
-	ui.setStatus("search", `search: ${list}`);
+	ui.setStatus("services", [...usedServices].sort().join(", "));
 }
 
-/** Transient progress while a search is in flight; settles via noteSearchBackendUsed. */
-export function setSearchProgress(ui: StatusUI, message: string): void {
+/** Record a successful service and refresh the shared services footer. */
+export function noteServiceUsed(ui: StatusUI, service: string): void {
+	usedServices.add(service);
+	refreshServicesStatus(ui);
+}
+
+/** Record a successful search backend. */
+export function noteSearchBackendUsed(ui: StatusUI, backend: BackendName): void {
+	noteServiceUsed(ui, backend);
+}
+
+/** Re-render settled list after a failed search attempt. */
+export function refreshSearchStatus(ui: StatusUI): void {
+	refreshServicesStatus(ui);
+}
+
+/** Transient progress while a search/docs fetch is in flight. */
+export function setServiceProgress(ui: StatusUI, message: string): void {
 	if (!statusEnabled()) return;
-	ui.setStatus("search", message);
+	ui.setStatus("services", message);
 }
 
 /** Show cowork only while a session is open; clear when closed. */

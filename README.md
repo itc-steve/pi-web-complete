@@ -5,6 +5,7 @@ Pi extension providing complete web access through three tools:
 - **`web_search`** — search across brave, serper, tavily, exa, and linkup (random pick with fallback)
 - **`web_read`** (aliases: `web_fetch`, `web_fetch_and_index`) — fetch a URL locally (undici → TLS-fingerprint fetch → CloakBrowser), returning **query-ranked excerpts by default** (or full page / vault save). Extraction is always local.
 - **`web_cowork`** — open a **visible** CloakBrowser window for shared control (user + agent click/type/navigate)
+- **`context7`** — up-to-date, version-current library/framework docs and code snippets from [Context7](https://context7.com) (registered only when a Context7 API key is configured)
 
 ## Requirements
 
@@ -51,7 +52,8 @@ Legacy JSON paths still load if the new ones are missing: `~/.pi/agent/extension
   "backends": {
     "brave":  { "enabled": true, "apiKeyEnv": "BRAVE_API_KEY" },
     "tavily": { "enabled": true, "apiKeyEnv": "TAVILY_API_KEY" }
-  }
+  },
+  "context7": { "enabled": true, "apiKeyEnv": "CONTEXT7_API_KEY" }
 }
 ```
 
@@ -60,6 +62,7 @@ Legacy JSON paths still load if the new ones are missing: `~/.pi/agent/extension
 ```bash
 BRAVE_API_KEY=your-brave-key-here
 TAVILY_API_KEY=your-tavily-key-here
+CONTEXT7_API_KEY=your-context7-key-here
 ```
 
 Key resolve order (per backend `apiKeyEnv`):
@@ -76,6 +79,31 @@ Never put the key string in the JSON.
 Auto mode shuffles **enabled backends that have an `apiKey`**: random primary, then the rest as fallback. Empty results and failures try the next provider; aborts stop immediately.
 
 - Pin with tool param `backend: "brave"` (etc.), or set `defaultBackend` in config.
+
+### Context7 (live library docs)
+
+The `context7` tool is **registered only if a Context7 key resolves** — no key, no tool in the prompt. Get one at [context7.com/dashboard](https://context7.com/dashboard), then:
+
+```json
+"context7": {
+  "enabled": true,
+  "apiKeyEnv": "CONTEXT7_API_KEY",
+  "timeout": 30000,
+  "fast": false
+}
+```
+
+When present, the agent is instructed to call `context7` **before writing code against any third-party library** rather than trusting training-data memory:
+
+```text
+context7({ library: "next.js", query: "app router middleware auth" })
+context7({ library: "/vercel/next.js/v14.3.0", query: "server actions form validation" })
+```
+
+- `library` accepts a plain name (resolved via `/api/v2/libs/search`) or a Context7 ID `/owner/repo`, optionally version-pinned with `/v14.3.0` or `@v14.3.0`.
+- `query` is the actual task — snippets are LLM-reranked against it.
+- `fast: true` skips reranking for lower latency (config default via `context7.fast`).
+- Set `"enabled": false` to keep the key but hide the tool.
 
 ### Read behavior
 
@@ -106,11 +134,18 @@ For **web_cowork**, the window is always headed. Persist logins with:
 
 Downloads default to `~/Downloads` (Chrome prefs + Playwright `downloadsPath`). Override with `cowork.downloadDir` — this applies to both `web_cowork` sessions and `web_read` browser renders.
 
+### CloakBrowser update notices
+
+CloakBrowser checks for a newer stealth Chromium on launch and logs progress with plain `console.log` / `console.warn` (`[cloakbrowser] Newer Chromium available…`). Pi's TUI owns stdout with differential rendering, so those unaccounted writes shift the cursor and the notice appears to land **inside the input box**.
+
+The extension installs a console filter at startup that drops `[cloakbrowser]`-tagged lines. Updates still run normally — only the terminal output is suppressed. Set `DEBUG=1` to see them again, or `CLOAKBROWSER_AUTO_UPDATE=false` to stop the checks entirely.
+
 ### Footer status
 
-By default the footer is empty until something is used this session:
+By default the footer is empty until something is used this session. Successful fetches accumulate into one clean **services** list (cleared each session):
 
-- After successful `web_search` calls: `search: brave, serper, tavily` (only backends that returned results)
+- `brave, context7, serper` — search backends and Context7 that returned data this session (sorted, names only)
+- While a fetch is in flight: brief progress (`🔍 Brave: searching…`, `context7: fetching…`), then back to the list
 - While `web_cowork` is open: `🌐 cowork: …` (cleared on close; never shows `cowork: closed`)
 - `web_read` shows progress briefly, then clears
 
@@ -123,6 +158,7 @@ Disable all footer updates with `"showStatus": false`.
 | `web_search` | `query`, `numResults`, `backend`, `compact` |
 | `web_read` | `url`, `query`, `return`, `mode`, `format`, `onlyMainContent`, `maxChars`, `maxBytes`, `headless`, `savePath`, `saveDir` |
 | `web_cowork` | `action`, `url`, `mode`, `ref`, `role`, `name`, `selector`, `text`, `clear`, `key`, `deltaY`, `query`, `maxChars`, `message`, `timeoutMs` |
+| `context7` | `library`, `query`, `fast` |
 
 ### web_read (excerpts by default)
 

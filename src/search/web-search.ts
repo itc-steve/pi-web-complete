@@ -6,7 +6,7 @@ import { Type } from "typebox";
 
 import type { BackendName } from "../types.js";
 import { config, refreshConfig, getActiveBackends } from "../config.js";
-import { noteSearchBackendUsed, refreshSearchStatus, setSearchProgress } from "../status.js";
+import { noteSearchBackendUsed, refreshSearchStatus, setServiceProgress } from "../status.js";
 import { BACKEND_DEFS, runBackend } from "./backends/registry.js";
 import { formatResults, formatResultsCompact } from "./formatters.js";
 
@@ -76,7 +76,7 @@ export function registerWebSearch(pi: ExtensionAPI): void {
 			const compact = Boolean(params.compact ?? config.compact);
 
 			const setProgress = (status: string) => {
-				setSearchProgress(ctx.ui, status);
+				setServiceProgress(ctx.ui, status);
 				onUpdate?.({ content: [{ type: "text", text: `*${status}*` }] });
 			};
 

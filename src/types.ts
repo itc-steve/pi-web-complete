@@ -55,6 +55,19 @@ export interface ReadConfig {
 	headless?: boolean;
 }
 
+export interface Context7Config {
+	/** Register the context7 tool. Default: true when a key resolves. */
+	enabled?: boolean;
+	/** Env var *name* holding the Context7 API key, e.g. "CONTEXT7_API_KEY". */
+	apiKeyEnv?: string;
+	/** @deprecated Prefer apiKeyEnv + web.env. */
+	apiKey?: string;
+	/** Request timeout in milliseconds. Default: 30000 */
+	timeout?: number;
+	/** Skip LLM reranking by default (faster, less relevant). Default: false */
+	fast?: boolean;
+}
+
 export interface CoworkConfig {
 	/**
 	 * Persistent Chromium profile for web_cowork.
@@ -79,6 +92,8 @@ export interface SearchConfig {
 	showStatus?: boolean;
 	numResults?: number;
 	read?: ReadConfig;
+	/** Up-to-date library docs via context7.com. */
+	context7?: Context7Config;
 	/** Shared-control visible CloakBrowser session (web_cowork). */
 	cowork?: CoworkConfig;
 	backends?: {

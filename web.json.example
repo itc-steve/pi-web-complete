@@ -16,6 +16,12 @@
     "headless": true
   },
 
+  "context7": {
+    "enabled": true,
+    "apiKeyEnv": "CONTEXT7_API_KEY",
+    "fast": false
+  },
+
   "cowork": {
     "userDataDir": "~/.cloakbrowser/cowork-profile",
     "downloadDir": "~/Downloads"

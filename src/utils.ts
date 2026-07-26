@@ -183,6 +183,42 @@ export function validateUrl(url: string): string | null {
 	}
 }
 
+/**
+ * Drop cloakbrowser's console chatter so it can't corrupt Pi's TUI.
+ *
+ * cloakbrowser logs update notices with plain console.log/warn from ensureBinary()
+ * ("[cloakbrowser] Newer Chromium available...", "Update available: ... npm install",
+ * download progress, and a promo banner on stderr). Pi's TUI owns stdout in raw mode
+ * with differential rendering — it tracks previousLines/hardwareCursorRow and only
+ * repaints changed rows — so an unaccounted write scrolls the screen, every cursor
+ * offset goes stale, and the next repaint paints the editor around the stray text.
+ * That is what "the update notice ended up in the input box" actually is.
+ *
+ * The update check is fire-and-forget, so the background-download lines arrive long
+ * after launch() resolves. Filtering permanently (rather than muting around the call)
+ * is the only thing that catches those. Non-cloakbrowser output still passes through.
+ * ponytail: prefix match on the tag cloakbrowser already stamps; DEBUG=1 restores it.
+ */
+export function installCloakLogFilter(): void {
+	const g = globalThis as { __piWebCloakFilter?: boolean };
+	if (g.__piWebCloakFilter || process.env.DEBUG) return;
+	g.__piWebCloakFilter = true;
+
+	// ponytail: matches the tag cloakbrowser stamps on its own lines. A couple of
+	// promo-banner lines carry no tag and still leak on first download — acceptable,
+	// tighten only if that banner actually shows up mid-session.
+	const isCloak = (args: unknown[]) =>
+		typeof args[0] === "string" && /cloakbrowser/i.test(args[0]);
+
+	for (const level of ["log", "warn", "error"] as const) {
+		const original = console[level].bind(console);
+		console[level] = (...args: unknown[]) => {
+			if (isCloak(args)) return;
+			original(...args);
+		};
+	}
+}
+
 export function sanitizeError(status: number, text: string): string {
 	const safe = text
 		.replace(/(bearer|token)\s+[\w.\/-]{8,}/gi, "$1 [redacted]")

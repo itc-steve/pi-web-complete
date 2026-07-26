@@ -152,7 +152,116 @@ function withMeta(result: ReadResult, html: string, pageUrl: string): ReadResult
 	};
 }
 
+function titleFromUrl(url: string): string | undefined {
+	try {
+		const seg = new URL(url).pathname.split("/").filter(Boolean).pop();
+		if (!seg) return undefined;
+		const decoded = decodeURIComponent(seg);
+		// Only use basename when it looks like a filename — "/v1/users/42" → undefined, not "42".
+		if (!/\.[a-z0-9]{1,8}$/i.test(decoded)) return undefined;
+		return decoded;
+	} catch {
+		return undefined;
+	}
+}
+
+/** HTML + XML/feeds — Readability + withMeta path (RSS/Atom are +xml). */
+export function isHtmlish(contentType: string): boolean {
+	const t = contentType.split(";")[0].trim().toLowerCase();
+	// image/svg+xml ends in +xml but is not an HTML/feed document.
+	if (t.startsWith("image/")) return false;
+	return (
+		t === "text/html" ||
+		t === "application/xhtml+xml" ||
+		t === "" ||
+		t.endsWith("+xml") ||
+		t === "text/xml" ||
+		t === "application/xml"
+	);
+}
+
+/** application/pdf Content-Type, or body starts with the %PDF- magic. */
+function isPdfContent(contentType: string, body: string): boolean {
+	const mime = contentType.split(";")[0].trim().toLowerCase();
+	if (mime === "application/pdf") return true;
+	return body.startsWith("%PDF-");
+}
+
+/** True when the body should skip HTML extraction (non-HTML MIME or PDF magic). */
+export function isRawBody(contentType: string, body: string): boolean {
+	return !isHtmlish(contentType) || isPdfContent(contentType, body);
+}
+
+/** Sniff real HTML even when Content-Type is wrong (e.g. text/plain). */
+function looksLikeHtml(body: string): boolean {
+	return /^\s*<(?:!doctype\s+html|html|head|body)\b/i.test(body);
+}
+
+export function contentFromAlternateBody(
+	body: string,
+	contentType: string,
+	format: ReadFormat,
+	removeImages: boolean,
+	maxChars?: number,
+	bytes?: number,
+): string {
+	// PDF first — never turndown binary / application/pdf
+	if (isPdfContent(contentType, body)) {
+		const n = bytes ?? Buffer.byteLength(body);
+		return truncate(
+			`[PDF document — text extraction not supported. ${n} bytes. Open the URL directly or use an external converter.]`,
+			maxChars,
+		);
+	}
+
+	const mime = contentType.split(";")[0].trim().toLowerCase();
+	if (mime.includes("html") || looksLikeHtml(body)) {
+		const fast = extractFast(body);
+		const { content } = materialize(
+			body,
+			fast.text,
+			format,
+			removeImages,
+			true,
+			fast.title,
+		);
+		return truncate(content, maxChars);
+	}
+	// markdown / plain / json — return as-is (json pretty-print if valid)
+	let text = body.replace(/\r\n/g, "\n").trim();
+	if (mime.includes("json")) {
+		try {
+			text = JSON.stringify(JSON.parse(text), null, 2);
+		} catch {
+			// keep raw
+		}
+	}
+	return truncate(text, maxChars);
+}
+
 function fromFetch(fetched: FetchResult, mode: string, options: MatOpts): ReadResult {
+	// Non-HTML / PDF: skip Readability + turndown; reuse alternate-body path.
+	if (isRawBody(fetched.contentType, fetched.html)) {
+		const content = contentFromAlternateBody(
+			fetched.html,
+			fetched.contentType,
+			options.format,
+			options.removeImages,
+			options.maxChars,
+			fetched.bytes,
+		);
+		return {
+			url: fetched.url,
+			finalUrl: fetched.finalUrl,
+			title: titleFromUrl(fetched.finalUrl || fetched.url),
+			mode: `${mode}+raw`,
+			format: options.format,
+			content,
+			status: fetched.status,
+			chars: content.length,
+		};
+	}
+
 	const fast = extractFast(fetched.html);
 	const { content, title } = materialize(
 		fetched.html,
@@ -177,43 +286,6 @@ function fromFetch(fetched: FetchResult, mode: string, options: MatOpts): ReadRe
 		fetched.html,
 		fetched.finalUrl || fetched.url,
 	);
-}
-
-function isHtmlish(contentType: string): boolean {
-	const t = contentType.split(";")[0].trim().toLowerCase();
-	return t === "text/html" || t === "application/xhtml+xml" || t === "";
-}
-
-function contentFromAlternateBody(
-	body: string,
-	contentType: string,
-	format: ReadFormat,
-	removeImages: boolean,
-	maxChars?: number,
-): string {
-	const mime = contentType.split(";")[0].trim().toLowerCase();
-	if (mime.includes("html")) {
-		const fast = extractFast(body);
-		const { content } = materialize(
-			body,
-			fast.text,
-			format,
-			removeImages,
-			true,
-			fast.title,
-		);
-		return truncate(content, maxChars);
-	}
-	// markdown / plain / json — return as-is (json pretty-print if valid)
-	let text = body.replace(/\r\n/g, "\n").trim();
-	if (mime.includes("json")) {
-		try {
-			text = JSON.stringify(JSON.parse(text), null, 2);
-		} catch {
-			// keep raw
-		}
-	}
-	return truncate(text, maxChars);
 }
 
 /**
@@ -265,6 +337,7 @@ async function maybeFollowAlternates(
 					options.format,
 					options.removeImages,
 					options.maxChars,
+					fetched.bytes,
 				);
 				// non-HTML alternates: keep parent page meta, just swap body
 				metaHtml = html;
@@ -381,6 +454,18 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 
 	// fast / readable / auto all start with undici
 	const fastFetch = await fetchUrl(url, { signal, timeoutMs, maxBytes });
+
+	// PDF only: skip signal analysis, alternates, and browser. Other non-HTML
+	// (text/plain, JSON, mislabeled HTML) still enters the recovery ladder so
+	// maybeFollowAlternates can run; fromFetch routes the body itself via
+	// contentFromAlternateBody when isRawBody is true. Browser escalation is
+	// gated on !rawBody later — raw bodies never benefit from a Chromium launch.
+	if (isPdfContent(fastFetch.contentType, fastFetch.html)) {
+		const baseMode = mode === "auto" ? "fast" : mode;
+		return fromFetch(fastFetch, baseMode, matOpts);
+	}
+
+	const rawBody = isRawBody(fastFetch.contentType, fastFetch.html);
 	const fast = extractFast(fastFetch.html);
 	const signals = analyzeSignals(fastFetch.status, fastFetch.html, fast.text);
 
@@ -451,31 +536,38 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 					return fpResult;
 				}
 
-				const rendered = await renderWithCloakBrowser(url, browserOpts);
-				const rFast = extractFast(rendered.html);
-				const { content, title } = materialize(
-					rendered.html,
-					rFast.text,
-					format,
-					removeImages,
-					onlyMainContent,
-					rFast.title,
-				);
-				const truncated = truncate(content, options.maxChars);
-				return withMeta(
-					{
-						url,
-						finalUrl: rendered.finalUrl,
-						title,
-						mode: "browser",
+				// Raw bodies never benefit from browser; auto must not hard-depend on it.
+				if (rawBody) return fpResult;
+
+				try {
+					const rendered = await renderWithCloakBrowser(url, browserOpts);
+					const rFast = extractFast(rendered.html);
+					const { content, title } = materialize(
+						rendered.html,
+						rFast.text,
 						format,
-						content: truncated,
-						status: rendered.status,
-						chars: truncated.length,
-					},
-					rendered.html,
-					rendered.finalUrl || url,
-				);
+						removeImages,
+						onlyMainContent,
+						rFast.title,
+					);
+					const truncated = truncate(content, options.maxChars);
+					return withMeta(
+						{
+							url,
+							finalUrl: rendered.finalUrl,
+							title,
+							mode: "browser",
+							format,
+							content: truncated,
+							status: rendered.status,
+							chars: truncated.length,
+						},
+						rendered.html,
+						rendered.finalUrl || url,
+					);
+				} catch {
+					return fpResult;
+				}
 			}
 			return maybeFollowAlternates(fromFetch(fp, "fingerprint", matOpts), fp.html, matOpts);
 		} catch {
@@ -530,37 +622,43 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 			}
 		}
 
-		if (signals.spaLikely || signals.sparseDom) {
+		// Raw bodies keep alternates (above) but never escalate to browser.
+		if (!rawBody && (signals.spaLikely || signals.sparseDom)) {
 			// Prefer a successful alternate over browser when we already found one.
 			if (altResult.chars > 200 && altResult.mode.includes("alternate")) {
 				return altResult;
 			}
 
-			const rendered = await renderWithCloakBrowser(url, browserOpts);
-			const rFast = extractFast(rendered.html);
-			const { content, title } = materialize(
-				rendered.html,
-				rFast.text,
-				format,
-				removeImages,
-				onlyMainContent,
-				rFast.title,
-			);
-			const truncated = truncate(content, options.maxChars);
-			return withMeta(
-				{
-					url,
-					finalUrl: rendered.finalUrl,
-					title,
-					mode: "browser",
+			try {
+				const rendered = await renderWithCloakBrowser(url, browserOpts);
+				const rFast = extractFast(rendered.html);
+				const { content, title } = materialize(
+					rendered.html,
+					rFast.text,
 					format,
-					content: truncated,
-					status: rendered.status,
-					chars: truncated.length,
-				},
-				rendered.html,
-				rendered.finalUrl || url,
-			);
+					removeImages,
+					onlyMainContent,
+					rFast.title,
+				);
+				const truncated = truncate(content, options.maxChars);
+				return withMeta(
+					{
+						url,
+						finalUrl: rendered.finalUrl,
+						title,
+						mode: "browser",
+						format,
+						content: truncated,
+						status: rendered.status,
+						chars: truncated.length,
+					},
+					rendered.html,
+					rendered.finalUrl || url,
+				);
+			} catch {
+				// Auto ladder must degrade to the best HTTP result, not throw.
+				return altResult;
+			}
 		}
 
 		return altResult;

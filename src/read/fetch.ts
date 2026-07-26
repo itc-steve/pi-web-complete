@@ -27,69 +27,109 @@ export function resolveMaxBytes(requested?: number): number {
 	return Math.max(requested, MIN_MAX_BYTES);
 }
 
+/** Try to resolve charset; return "utf-8" on any failure. */
+function resolveCharset(contentType: string, bytes: Uint8Array): string {
+  // (a) Content-Type header — honour for all MIME types
+  const ct = /charset\s*=\s*["']?([\w-]+)/i.exec(contentType);
+  if (ct?.[1]) return ct[1];
+
+  // (b) <meta charset> is an HTML mechanism — never sniff text/plain, JSON, etc.
+  // A markdown/docs body that merely *mentions* <meta charset="utf-16le"> must
+  // stay utf-8; otherwise the whole body is destroyed.
+  const mime = contentType.split(";")[0].trim().toLowerCase();
+  if (mime && !mime.includes("html") && !mime.includes("xml")) return "utf-8";
+
+  // (c) <meta> in first 2048 bytes — decode as latin1 (lossless for single-byte)
+  const preview = new TextDecoder("iso-8859-1").decode(
+    bytes.slice(0, 2048),
+  );
+  const meta = /<meta[^>]+(?:charset\s*=\s*["']?([\w-]+)|content\s*=\s*["'][^"']*charset\s*=\s*([\w-]+))/i.exec(preview);
+  if (meta?.[1] || meta?.[2]) return meta[1] ?? meta[2] ?? "utf-8";
+
+  // (d) Default
+  return "utf-8";
+}
+
 /**
  * Read a fetch Response body up to maxBytes, then cancel the stream.
  * Falls back to arrayBuffer slice when body is unavailable.
  */
 export async function readBodyCapped(
-	response: {
-		body?: { getReader: () => ReadableStreamDefaultReader<Uint8Array> } | null;
-		arrayBuffer: () => Promise<ArrayBuffer>;
-	},
-	maxBytes: number,
+  response: {
+    body?: { getReader: () => ReadableStreamDefaultReader<Uint8Array> } | null;
+    arrayBuffer: () => Promise<ArrayBuffer>;
+    headers?: { get: (n: string) => string | null };
+  },
+  maxBytes: number,
 ): Promise<{ text: string; bytes: number; truncated: boolean }> {
-	const body = response.body;
-	if (!body || typeof body.getReader !== "function") {
-		const ab = await response.arrayBuffer();
-		const truncated = ab.byteLength > maxBytes;
-		const slice = truncated ? ab.slice(0, maxBytes) : ab;
-		return {
-			text: Buffer.from(slice).toString("utf-8"),
-			bytes: Math.min(ab.byteLength, maxBytes + (truncated ? 1 : 0)),
-			truncated,
-		};
-	}
+  const body = response.body;
+  const contentType = response.headers?.get("content-type") ?? "";
 
-	const reader = body.getReader();
-	const chunks: Uint8Array[] = [];
-	let total = 0;
-	let truncated = false;
+  if (!body || typeof body.getReader !== "function") {
+    const ab = await response.arrayBuffer();
+    const truncated = ab.byteLength > maxBytes;
+    const slice = truncated ? ab.slice(0, maxBytes) : ab;
+    const buf = Buffer.from(slice);
+    const raw = new Uint8Array(buf);
+    const charset = resolveCharset(contentType, raw);
+    const text = decodeBuffer(buf, charset);
+    return {
+      text,
+      bytes: Math.min(ab.byteLength, maxBytes + (truncated ? 1 : 0)),
+      truncated,
+    };
+  }
 
-	try {
-		while (true) {
-			const { done, value } = await reader.read();
-			if (done) break;
-			if (!value?.byteLength) continue;
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let truncated = false;
 
-			if (total >= maxBytes) {
-				truncated = true;
-				break;
-			}
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value?.byteLength) continue;
 
-			const room = maxBytes - total;
-			if (value.byteLength <= room) {
-				chunks.push(value);
-				total += value.byteLength;
-			} else {
-				chunks.push(value.subarray(0, room));
-				total += room;
-				truncated = true;
-				break;
-			}
-		}
-	} finally {
-		try {
-			await reader.cancel();
-		} catch {
-			// ignore
-		}
-	}
+      if (total >= maxBytes) {
+        truncated = true;
+        break;
+      }
 
-	return {
-		text: Buffer.concat(chunks.map((c) => Buffer.from(c))).toString("utf-8"),
-		bytes: total,
-		truncated,
-	};
+      const room = maxBytes - total;
+      if (value.byteLength <= room) {
+        chunks.push(value);
+        total += value.byteLength;
+      } else {
+        chunks.push(value.subarray(0, room));
+        total += room;
+        truncated = true;
+        break;
+      }
+    }
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      // ignore
+    }
+  }
+
+  const raw = Buffer.concat(chunks.map((c) => Buffer.from(c)));
+  const charset = resolveCharset(contentType, new Uint8Array(raw));
+  const text = decodeBuffer(raw, charset);
+
+  return { text, bytes: total, truncated };
+}
+
+/** Decode a buffer using the given charset label. Falls back to utf-8. */
+function decodeBuffer(buf: Buffer, charset: string): string {
+  try {
+    return new TextDecoder(charset, { fatal: false }).decode(buf);
+  } catch {
+    // Unknown label — RangeError
+    return new TextDecoder("utf-8").decode(buf);
+  }
 }
 
 async function fetchUrlOnce(
