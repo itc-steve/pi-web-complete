@@ -1,15 +1,31 @@
 # pi-web-complete
 
-Pi extension providing complete web access through three tools:
+Pi extension providing complete web access through four tools:
 
 - **`web_search`** — search across brave, serper, tavily, exa, and linkup (random pick with fallback)
 - **`web_read`** (aliases: `web_fetch`, `web_fetch_and_index`) — fetch a URL locally (undici → TLS-fingerprint fetch → CloakBrowser), returning **query-ranked excerpts by default** (or full page / vault save). Extraction is always local.
-- **`web_cowork`** — open a **visible** CloakBrowser window for shared control (user + agent click/type/navigate)
+- **`web_cowork`** — open a **visible** CloakBrowser session in a desktop window or an optional Herdr pane
 - **`context7`** — up-to-date, version-current library/framework docs and code snippets from [Context7](https://context7.com) (registered only when a Context7 API key is configured)
+
+## Browser inside Herdr
+
+`web_cowork` can open Chromium inside a [Herdr](https://herdr.dev) pane. The agent uses the normal cowork tools while you watch or take control.
+
+Enable the integration in `web.json`:
+
+```json
+{
+  "cowork": {
+    "herdr": { "enabled": true, "direction": "right" }
+  }
+}
+```
+
+The browser uses the same cowork profile in both display modes. See [Browser inside a Herdr pane](#browser-inside-a-herdr-pane-opt-in) for requirements, controls, and diagnostics.
 
 ## Requirements
 
-- Node.js 20+ (uses `AbortSignal.any`, native `fetch`)
+- Node.js 20.18.1+ (matches runtime dependency requirements)
 - The `postinstall` script runs `cloakbrowser install`, which prefetches the stealth Chromium binary into `~/.cloakbrowser/` (auto-updates on launch by default)
 
 ## Install
@@ -210,6 +226,105 @@ web_cowork({ action: "close" })
 Snapshot modes: `interactive` (default), `content` (markdown/excerpts), `both`. Refs are invalidated after click/navigate/wait/scroll — always snapshot again before the next action. Values of password/secret-looking fields are shown as `[redacted]` in snapshots.
 
 Prefer `web_read` for one-shot extraction without user interaction.
+
+### Browser inside a Herdr pane (opt-in)
+
+Instead of a separate desktop window, cowork can render Chromium **inside a
+[Herdr](https://herdr.dev) pane**: the agent drives the browser, you watch it in
+the layout you are already working in, and you can take over with the mouse and
+keyboard without detaching the agent.
+
+Off by default. Enable it under `cowork.herdr` in `web.json`:
+
+```json
+{
+  "cowork": {
+    "herdr": { "enabled": true, "direction": "right" }
+  }
+}
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | `false` | Render in a Herdr pane instead of a desktop window |
+| `direction` | `"right"` | Split direction |
+| `focusOnOpen` | `true` | Focus the browser pane when it opens |
+| `browserZoom` | `0.75` | Initial page zoom, `0.5`–`2.5` |
+| `showDiagnostics` | `false` | Bottom row with stream/viewport metrics |
+| `captureScale` | `1` | Shrink transferred frames (`0.1`–`1`). Best CPU knob |
+| `screencastEveryNthFrame` | `1` | `2` halves the producer frame rate |
+| `fallbackToWindow` | `true` | Open a normal window if the pane can't start |
+| `cdpPort` | `0` | `0` picks a free loopback port |
+
+**In-pane controls**
+
+| Input | Action |
+| --- | --- |
+| click / drag / scroll | Forwarded to the page |
+| typing | Forwarded to the focused element |
+| `ctrl+l` | Edit the URL bar (`Enter` to go, `Esc` to cancel) |
+| `ctrl+r` / `ctrl+t` / `ctrl+q` | Reload / new tab / close the view |
+| toolbar row 1 | Tab strip: click to select, `[x]` close, `[+]` new |
+| toolbar row 2 | `[<] [>] [r] [-] [+]` and the URL |
+
+#### Requirements (all four, or it falls back)
+
+1. Herdr **0.7.4+**, and Pi running inside a Herdr pane.
+2. Experimental graphics enabled in `~/.config/herdr/config.toml`:
+   ```toml
+   [experimental]
+   kitty_graphics = true
+   ```
+   then `herdr server reload-config`.
+3. **Restart the Herdr client** (detach and re-attach, or quit and run `herdr`).
+   A client that attached *before* the flag was on reports a `0px` cell size and
+   Herdr silently drops every frame. This is the most common cause of a blank pane.
+4. A Kitty-graphics terminal: Ghostty, kitty, or WezTerm.
+
+When any of these is missing, cowork prints why and opens a normal desktop
+window instead (set `fallbackToWindow: false` to make it a hard error).
+
+#### Verify the setup
+
+From a Herdr pane:
+
+```bash
+npm run verify:herdr -- https://example.com
+```
+
+It checks graphics support, launches a headless browser, opens the pane, and
+tells you what to click. Press `q` or `Ctrl+C` to tear it down. View errors go
+to `/tmp/pi-herdr-view.log`.
+
+Add `--seconds 20` to exit on its own (useful in scripts), or `--check` to test
+graphics support and the browser launch without opening a pane.
+
+**Runtime:** the view uses `bun` when available, otherwise the packaged `tsx`
+runtime. Plain `node --experimental-strip-types` cannot resolve this repo's
+`.js` import specifiers to `.ts` files. Override the executable path with
+`PI_HERDR_VIEW_RUNNER`.
+
+#### How it works
+
+Pi owns Chromium through CloakBrowser and keeps its Playwright handle, so every
+`web_cowork` action works exactly the same in either mode. Chromium is launched
+headless with a loopback `--remote-debugging-port`; a small view process in the
+pane attaches over CDP, pushes `Page.screencast` frames to Herdr's
+`pane.graphics.stream`, and translates SGR mouse reports and key sequences back
+into `Input.dispatch*`. Closing the pane does not kill the browser, and the CDP
+port stays on loopback.
+
+Frame pacing: 15 FPS passive, 30 FPS for 750 ms after direct input, with
+`Page.screencastFrameAck` delayed to apply backpressure before Chromium encodes
+a frame nobody will see. A settled page sends almost nothing.
+
+**Security:** Herdr mode exposes unauthenticated Chrome DevTools Protocol on
+loopback while the cowork session is open. Use it only on trusted, single-user
+hosts. Cowork is an interactive browser; user-driven navigation can reach local
+network services.
+
+Not supported: downloads, right-click menus, DevTools, IME, text selection, and
+find-in-page. Frame bandwidth is tuned for local sessions, not remote SSH.
 
 ## License
 

@@ -155,10 +155,15 @@ export function isPrivateHost(host: string): boolean {
 	return false;
 }
 
-/** Returns an error message if the URL is unsafe, or null if OK. */
-export function validateUrl(url: string): string | null {
+/**
+ * Returns an error message if the URL is unsafe, or null if OK.
+ * allowFile: permit file:// (cowork only — user drives their own browser).
+ */
+export function validateUrl(url: string, allowFile = false): string | null {
 	try {
 		const parsed = new URL(url);
+
+		if (allowFile && parsed.protocol === "file:") return null;
 
 		if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
 			return `SSRF blocked: only http/https allowed, got ${parsed.protocol}`;

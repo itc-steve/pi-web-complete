@@ -1,6 +1,6 @@
 {
   "name": "@itc-steve/pi-web-complete",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "description": "Pi extension: multi-backend web_search, local web_read with query-ranked excerpts, and web_cowork shared browser control.",
   "keywords": [
     "pi-package",
@@ -9,7 +9,9 @@
     "web-search",
     "web-read",
     "web-cowork",
-    "cloakbrowser"
+    "cloakbrowser",
+    "herdr",
+    "cdp"
   ],
   "author": {
     "name": "itc-steve",
@@ -28,16 +30,24 @@
     "access": "public"
   },
   "type": "module",
+  "engines": {
+    "node": ">=20.18.1"
+  },
   "files": [
     "src",
     "types",
     "web.json.example",
     "web.env.example",
     "README.md",
-    "LICENSE"
+    "CHANGELOG.md",
+    "LICENSE",
+    "scripts"
   ],
   "scripts": {
-    "postinstall": "cloakbrowser install"
+    "postinstall": "cloakbrowser install",
+    "test": "for f in test/*.test.ts; do tsx \"$f\" || exit 1; done",
+    "typecheck": "tsc --noEmit",
+    "verify:herdr": "tsx scripts/verify-herdr-view.ts"
   },
   "pi": {
     "extensions": [
@@ -62,10 +72,11 @@
     "impit": "^0.14.1",
     "linkedom": "^0.18.12",
     "playwright-core": "^1.60.0",
+    "tsx": "^4.23.3",
     "turndown": "^7.2.4",
     "turndown-plugin-gfm": "^1.0.2",
     "typebox": "^1.1.24",
-    "undici": "^8.4.1"
+    "undici": "^7.29.0"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",

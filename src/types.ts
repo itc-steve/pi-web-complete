@@ -68,6 +68,38 @@ export interface Context7Config {
 	fast?: boolean;
 }
 
+/**
+ * Render the cowork browser inside a Herdr pane instead of a desktop window.
+ *
+ * Requires Herdr >= 0.7.4 with `[experimental] kitty_graphics = true`, a
+ * Kitty-graphics terminal (Ghostty, kitty, WezTerm), and a Herdr client that
+ * attached *after* the flag was enabled (an older client reports a 0px cell
+ * size and frames are dropped).
+ */
+export interface HerdrCoworkConfig {
+	/** Master switch. Default false — cowork opens a normal window. */
+	enabled?: boolean;
+	/** Split direction when placement="split". Default "right". */
+	direction?: "right" | "down";
+	/** Focus the browser pane when it opens. Default true. */
+	focusOnOpen?: boolean;
+	/** Initial page zoom, 0.5–2.5. Default 0.75. */
+	browserZoom?: number;
+	/** Reserve a bottom row with stream/viewport metrics. Default false. */
+	showDiagnostics?: boolean;
+	/** Shrink transferred frames, 0.1–1. Default 1. Lower = less CPU. */
+	captureScale?: number;
+	/** 1 or 2; 2 halves the producer frame rate. Default 1. */
+	screencastEveryNthFrame?: 1 | 2;
+	/**
+	 * When the pane view cannot start (no Herdr, graphics disabled, old client),
+	 * fall back to a normal desktop window instead of failing. Default true.
+	 */
+	fallbackToWindow?: boolean;
+	/** Fixed CDP port. Default 0 = pick a free port. */
+	cdpPort?: number;
+}
+
 export interface CoworkConfig {
 	/**
 	 * Persistent Chromium profile for web_cowork.
@@ -78,6 +110,8 @@ export interface CoworkConfig {
 	 * Directory for browser downloads. Default: ~/Downloads
 	 */
 	downloadDir?: string;
+	/** Render the browser inside a Herdr pane (opt-in). */
+	herdr?: HerdrCoworkConfig;
 }
 
 export interface SearchConfig {

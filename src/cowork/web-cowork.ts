@@ -5,6 +5,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 
 import { config, refreshConfig } from "../config.js";
+import { resolveHerdrConfig } from "./herdr/config.js";
 import { pageOutline, selectExcerpts } from "../read/excerpts.js";
 import { htmlToMarkdown, htmlToText } from "../read/markdown.js";
 import { extractReadable, readableIsBetter } from "../read/readable.js";
@@ -174,6 +175,10 @@ function coworkDownloadDir(): string | undefined {
 	return config.cowork?.downloadDir;
 }
 
+function herdrConfig() {
+	return resolveHerdrConfig(config.cowork?.herdr);
+}
+
 function progress(
 	ctx: ExtensionContext,
 	onUpdate: (update: { content: Array<{ type: string; text: string }> }) => void,
@@ -269,23 +274,33 @@ async function executeCowork(
 		case "open": {
 			if (!params.url?.trim()) throw new Error("action=open requires url");
 			progress(ctx, onUpdate, "🌐 cowork: opening…");
-			const { page } = await ensureCoworkSession({
+			const notes: string[] = [];
+			const { page, herdr } = await ensureCoworkSession({
 				userDataDir: coworkUserDataDir(),
 				downloadDir: coworkDownloadDir(),
+				herdr: herdrConfig(),
+				initialUrl: params.url.trim(),
+				onNote: (note) => {
+					notes.push(note);
+					onUpdate({ content: [{ type: "text", text: note }] });
+				},
 			});
 			const nav = await navigateCoworkPage(page, params.url.trim(), undefined, signal);
 			progress(ctx, onUpdate, `🌐 cowork: ${nav.title || nav.url}`);
 			return textResult(
 				[
-					`Opened visible CloakBrowser window.`,
+					herdr
+						? `Opened CloakBrowser in Herdr pane ${herdr.paneId} (the user can click and type in it directly).`
+						: `Opened visible CloakBrowser window.`,
 					`Title: ${nav.title || "(none)"}`,
 					`URL: ${nav.url}`,
 					`HTTP: ${nav.status}`,
+					...(notes.length ? [``, ...notes] : []),
 					``,
 					`Next: action=snapshot (interactive refs), then click/type with ref="@eN".`,
 					`If the user must log in / solve a CAPTCHA first: action=wait, then snapshot.`,
 				].join("\n"),
-				{ action: "open", ...nav, open: true },
+				{ action: "open", ...nav, open: true, herdrPaneId: herdr?.paneId },
 			);
 		}
 
@@ -558,6 +573,10 @@ async function executeCowork(
 					`Title: ${status.title || "(none)"}`,
 					`URL: ${status.url}`,
 					`Profile: ${status.userDataDir}`,
+					...(status.herdrPaneId ? [`Herdr pane: ${status.herdrPaneId}`] : []),
+					...(status.herdrFallbackReason
+						? [`Herdr pane unavailable: ${status.herdrFallbackReason}`]
+						: []),
 				].join("\n"),
 				{ action: "status", ...status },
 			);
