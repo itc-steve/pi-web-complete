@@ -30,10 +30,16 @@ export interface ResolveTarget {
 
 let lastRefs: InteractiveRef[] = [];
 let lastPageUrl = "";
+let nextCoworkRef = 1;
 
 export function clearCoworkRefs(): void {
 	lastRefs = [];
 	lastPageUrl = "";
+}
+
+export function resetCoworkRefs(): void {
+	clearCoworkRefs();
+	nextCoworkRef = 1;
 }
 
 export function getLastCoworkRefs(): InteractiveRef[] {
@@ -53,10 +59,10 @@ function isRefToken(raw: string): boolean {
 
 export function formatInteractiveSnapshot(refs: InteractiveRef[], maxChars = 6_000): string {
 	const lines = [
-		"Interactive elements (use ref like @e3 for click/type — do NOT invent CSS):",
+		"Interactive elements (use ref like @e3 for click/type/batch — do NOT invent CSS):",
 		"",
 	];
-	for (const r of refs) {
+	for (const r of [...refs].sort((a, b) => Number(b.inViewport !== false) - Number(a.inViewport !== false))) {
 		const bits: string[] = [`@${r.ref}`, r.role || r.tag];
 		if (r.name) bits.push(JSON.stringify(r.name));
 		const extras: string[] = [];
@@ -75,9 +81,7 @@ export function formatInteractiveSnapshot(refs: InteractiveRef[], maxChars = 6_0
 		lines.push("(none found — try scroll, wait, or snapshot mode=content)");
 	} else {
 		lines.push("");
-		lines.push(
-			`Refs are valid until the page changes. After click/navigate, call snapshot again before the next action.`,
-		);
+		lines.push(`Refs are valid until the page changes; actions return fresh refs.`);
 	}
 	let out = lines.join("\n");
 	if (out.length > maxChars) {
@@ -108,7 +112,7 @@ export async function buildInteractiveSnapshot(
 	options: { maxChars?: number } = {},
 ): Promise<{ refs: InteractiveRef[]; text: string }> {
 	const collected = (await page.evaluate(
-		({ attr, max }) => {
+		({ attr, max, start }) => {
 			document.querySelectorAll(`[${attr}]`).forEach((el) => {
 				el.removeAttribute(attr);
 			});
@@ -209,20 +213,26 @@ export async function buildInteractiveSnapshot(
 				return text.slice(0, 120);
 			};
 
-			const nodes = Array.from(document.querySelectorAll(selector)).filter(isVisible);
 			const vh = window.innerHeight || 800;
 			const vw = window.innerWidth || 1200;
+			const nodes = Array.from(document.querySelectorAll(selector))
+				.filter(isVisible)
+				.map((el) => {
+					const rect = (el as HTMLElement).getBoundingClientRect();
+					return {
+						el,
+						inViewport:
+							rect.bottom > 0 && rect.right > 0 && rect.top < vh && rect.left < vw,
+					};
+				})
+				.sort((a, b) => Number(b.inViewport) - Number(a.inViewport));
 			const items: DomCollectResult["items"] = [];
 			let n = 0;
-			for (const el of nodes) {
+			for (const { el, inViewport } of nodes) {
 				if (n >= max) break;
+				const ref = `e${start + n}`;
 				n += 1;
-				const ref = `e${n}`;
 				el.setAttribute(attr, ref);
-				const html = el as HTMLElement;
-				const rect = html.getBoundingClientRect();
-				const inViewport =
-					rect.bottom > 0 && rect.right > 0 && rect.top < vh && rect.left < vw;
 				const tag = el.tagName.toLowerCase();
 				const item: DomCollectResult["items"][number] = {
 					ref,
@@ -262,9 +272,10 @@ export async function buildInteractiveSnapshot(
 			}
 			return { items };
 		},
-		{ attr: REF_ATTR, max: MAX_INTERACTIVE },
+		{ attr: REF_ATTR, max: MAX_INTERACTIVE, start: nextCoworkRef },
 	)) as DomCollectResult;
 
+	nextCoworkRef += collected.items.length;
 	lastRefs = collected.items;
 	lastPageUrl = page.url();
 	const text = formatInteractiveSnapshot(lastRefs, options.maxChars ?? 6_000);
@@ -426,6 +437,60 @@ export async function prepareAndAct(
 			"";
 		throw new Error(`${msg}${suggestNearMisses(hint)}`);
 	}
+}
+
+export interface FillStep {
+	ref: string;
+	text: string;
+	clear?: boolean;
+}
+
+/** Fill fields from one snapshot, then optionally click once. */
+export async function runFillBatch(
+	page: Page,
+	fills: FillStep[],
+	clickRef?: string,
+	signal?: AbortSignal,
+): Promise<{ filled: number; clicked: boolean }> {
+	let filled = 0;
+	for (const step of fills) {
+		try {
+			await prepareAndAct(
+				page,
+				{ ref: step.ref },
+				async (loc) => {
+					if (step.clear !== false) {
+						await loc.fill(step.text, { timeout: ACTION_TIMEOUT_MS });
+					} else {
+						await loc.pressSequentially(step.text, { delay: 20, timeout: ACTION_TIMEOUT_MS });
+					}
+				},
+				{ signal },
+			);
+			filled++;
+		} catch (err) {
+			if (signal?.aborted) throw err;
+			throw new Error(
+				`Batch stopped after ${filled}/${fills.length} fills: ${err instanceof Error ? err.message : String(err)}`,
+			);
+		}
+	}
+	if (clickRef) {
+		try {
+			await prepareAndAct(
+				page,
+				{ ref: clickRef },
+				(loc) => loc.click({ timeout: ACTION_TIMEOUT_MS }),
+				{ signal },
+			);
+		} catch (err) {
+			if (signal?.aborted) throw err;
+			throw new Error(
+				`Batch filled ${filled}/${fills.length}, final click failed or outcome unknown: ${err instanceof Error ? err.message : String(err)}`,
+			);
+		}
+	}
+	return { filled, clicked: Boolean(clickRef) };
 }
 
 export { ACTION_TIMEOUT_MS, REF_ATTR };

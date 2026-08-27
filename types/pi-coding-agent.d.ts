@@ -10,8 +10,8 @@ declare module "@earendil-works/pi-coding-agent" {
 	}
 
 	export interface UIInputOptions {
-		placeholder?: string;
-		validate?: (value: string) => string | undefined;
+		signal?: AbortSignal;
+		timeout?: number;
 	}
 
 	export interface UI {
@@ -19,7 +19,7 @@ declare module "@earendil-works/pi-coding-agent" {
 		setStatus(key: string, status: string): void;
 		select<T extends string>(label: string, options: T[]): Promise<T | undefined>;
 		select<T extends UISelectOption>(label: string, options: T[]): Promise<T | undefined>;
-		input(label: string, options?: UIInputOptions): Promise<string | undefined>;
+		input(label: string, placeholder?: string, options?: UIInputOptions): Promise<string | undefined>;
 	}
 
 	export interface ContextUsage {
@@ -42,6 +42,7 @@ declare module "@earendil-works/pi-coding-agent" {
 		promptSnippet: string;
 		promptGuidelines?: string[];
 		parameters: unknown;
+		executionMode?: "parallel" | "sequential";
 		execute: (
 			toolCallId: string,
 			params: any,

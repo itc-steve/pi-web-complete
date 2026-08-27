@@ -11,7 +11,7 @@ import {
 	ensureChromeDownloadPrefs,
 	resolveDownloadDir,
 } from "../read/downloads.js";
-import { clearCoworkRefs } from "./refs.js";
+import { clearCoworkRefs, resetCoworkRefs } from "./refs.js";
 import type { ResolvedHerdrConfig } from "./herdr/config.js";
 import { viewLogPath } from "./herdr/config.js";
 import {
@@ -78,7 +78,7 @@ async function isContextAlive(context: BrowserContext): Promise<boolean> {
 }
 
 async function clearSession(): Promise<void> {
-	clearCoworkRefs();
+	resetCoworkRefs();
 	const current = session;
 	session = undefined;
 	if (!current) return;

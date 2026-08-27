@@ -1,34 +1,29 @@
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%" alt="pi-web-complete routes Pi agent requests through search, local reading, shared browser control, and current documentation">
+</p>
+
 # pi-web-complete
 
-Pi extension providing complete web access through four tools:
+Give [Pi](https://github.com/badlogic/pi-mono) one extension for web discovery, clean local extraction, visible browser interaction, and version-current framework docs.
 
-- **`web_search`** — search across brave, serper, tavily, exa, and linkup (random pick with fallback)
-- **`web_read`** (aliases: `web_fetch`, `web_fetch_and_index`) — fetch a URL locally (undici → TLS-fingerprint fetch → CloakBrowser), returning **query-ranked excerpts by default** (or full page / vault save). Extraction is always local.
-- **`web_cowork`** — open a **visible** CloakBrowser session in a desktop window or an optional Herdr pane
-- **`context7`** — up-to-date, version-current library/framework docs and code snippets from [Context7](https://context7.com) (registered only when a Context7 API key is configured)
-
-## Browser inside Herdr
-
-`web_cowork` can open Chromium inside a [Herdr](https://herdr.dev) pane. The agent uses the normal cowork tools while you watch or take control.
-
-Enable the integration in `web.json`:
-
-```json
-{
-  "cowork": {
-    "herdr": { "enabled": true, "direction": "right" }
-  }
-}
+```bash
+pi install npm:@itc-steve/pi-web-complete
 ```
 
-The browser uses the same cowork profile in both display modes. See [Browser inside a Herdr pane](#browser-inside-a-herdr-pane-opt-in) for requirements, controls, and diagnostics.
+## One extension, four jobs
 
-## Requirements
+| Tool | Use it for | What makes it useful |
+| --- | --- | --- |
+| **`web_search`** | Current facts and discovery | Brave, Serper, Tavily, Exa, and Linkup with shuffled fallback |
+| **`web_read`** | Reading a URL | Local extraction with query-ranked excerpts by default; `web_fetch` alias included |
+| **`web_cowork`** | Login, CAPTCHA, and multi-step pages | Visible CloakBrowser session shared by user and agent, optionally inside Herdr |
+| **`context7`** | Library and framework APIs | Version-current documentation, registered only when configured |
 
-- Node.js 20.18.1+ (matches runtime dependency requirements)
-- The `postinstall` script runs `cloakbrowser install`, which prefetches the stealth Chromium binary into `~/.cloakbrowser/` (auto-updates on launch by default)
+`web_search` finds the page. `web_read` turns it into focused context. `web_cowork` handles pages that need a person or browser UI. `context7` keeps implementation work grounded in current docs.
 
-## Install
+## Quick start
+
+### 1. Install
 
 ```bash
 pi install npm:@itc-steve/pi-web-complete
@@ -40,201 +35,138 @@ From a local checkout:
 pi install /path/to/pi-web-complete
 ```
 
-## Config (two files side by side)
+### 2. Configure
 
-Same pattern as pi-fgt: JSON has no secrets; keys live in a sibling `.env` file.
-
-| File | Purpose |
-|------|---------|
-| `~/.pi/agent/web.json` | Defaults, enabled backends, `apiKeyEnv` **names** (no secrets) |
-| `~/.pi/agent/web.env` | Actual API keys as `KEY=value` |
-| `.pi/web.json` | Optional project override (deep-merges per backend) |
-| `.pi/web.env` | Optional project secrets (overlay global `web.env`) |
+Configuration and secrets live in separate files:
 
 ```bash
 cp /path/to/pi-web-complete/web.json.example ~/.pi/agent/web.json
-cp /path/to/pi-web-complete/web.env.example  ~/.pi/agent/web.env
+cp /path/to/pi-web-complete/web.env.example ~/.pi/agent/web.env
 chmod 600 ~/.pi/agent/web.env
-# edit both — enable backends in JSON, paste keys in the .env
+# edit web.json, then paste your keys into web.env
 ```
 
-Legacy JSON paths still load if the new ones are missing: `~/.pi/agent/extensions/search.json` and `.pi/search.json`.
-
-### `web.json`
+`~/.pi/agent/web.json`:
 
 ```json
 {
   "defaultBackend": "auto",
   "backends": {
     "brave":  { "enabled": true, "apiKeyEnv": "BRAVE_API_KEY" },
-    "tavily": { "enabled": true, "apiKeyEnv": "TAVILY_API_KEY" }
+    "serper": { "enabled": true, "apiKeyEnv": "SERPER_API_KEY" },
+    "tavily": { "enabled": true, "apiKeyEnv": "TAVILY_API_KEY" },
+    "exa":    { "enabled": true, "apiKeyEnv": "EXA_API_KEY" },
+    "linkup": { "enabled": true, "apiKeyEnv": "LINKUP_API_KEY", "depth": "standard" }
   },
   "context7": { "enabled": true, "apiKeyEnv": "CONTEXT7_API_KEY" }
 }
 ```
 
-### `web.env` (secrets)
+`~/.pi/agent/web.env`:
 
 ```bash
-BRAVE_API_KEY=your-brave-key-here
-TAVILY_API_KEY=your-tavily-key-here
-CONTEXT7_API_KEY=your-context7-key-here
+BRAVE_API_KEY=replace-with-brave-key
+SERPER_API_KEY=replace-with-serper-key
+TAVILY_API_KEY=replace-with-tavily-key
+EXA_API_KEY=replace-with-exa-key
+LINKUP_API_KEY=replace-with-linkup-key
+CONTEXT7_API_KEY=replace-with-context7-key
+GITHUB_TOKEN=replace-with-github-token
 ```
 
-Key resolve order (per backend `apiKeyEnv`):
+Project overrides can live in `.pi/web.json` and `.pi/web.env`. Project JSON overrides global top-level settings while `backends` merge per backend; project secrets overlay global secrets. Keep key values in `.env`, never JSON.
 
-1. `process.env[apiKeyEnv]` (shell export wins if set)
-2. `.pi/web.env` (project)
-3. `~/.pi/agent/web.env` (global)
-4. Legacy literal `apiKey` in JSON (deprecated — still works so old configs don't break)
-
-Never put the key string in the JSON.
-
-### Search dispatch
-
-Auto mode shuffles **enabled backends that have an `apiKey`**: random primary, then the rest as fallback. Empty results and failures try the next provider; aborts stop immediately.
-
-- Pin with tool param `backend: "brave"` (etc.), or set `defaultBackend` in config.
-
-### Context7 (live library docs)
-
-The `context7` tool is **registered only if a Context7 key resolves** — no key, no tool in the prompt. Get one at [context7.com/dashboard](https://context7.com/dashboard), then:
-
-```json
-"context7": {
-  "enabled": true,
-  "apiKeyEnv": "CONTEXT7_API_KEY",
-  "timeout": 30000,
-  "fast": false
-}
-```
-
-When present, the agent is instructed to call `context7` **before writing code against any third-party library** rather than trusting training-data memory:
+### 3. Use
 
 ```text
+web_search({ query: "Node.js fetch timeout patterns", compact: true })
+web_read({ url: "https://example.com/guide", query: "authentication setup" })
+web_cowork({ action: "open", url: "https://example.com/login" })
 context7({ library: "next.js", query: "app router middleware auth" })
-context7({ library: "/vercel/next.js/v14.3.0", query: "server actions form validation" })
 ```
 
-- `library` accepts a plain name (resolved via `/api/v2/libs/search`) or a Context7 ID `/owner/repo`, optionally version-pinned with `/v14.3.0` or `@v14.3.0`.
-- `query` is the actual task — snippets are LLM-reranked against it.
-- `fast: true` skips reranking for lower latency (config default via `context7.fast`).
-- Set `"enabled": false` to keep the key but hide the tool.
+## Read pages without flooding context
 
-### Read behavior
+<p align="center">
+  <img src="./assets/readme/read-pipeline.svg" width="100%" alt="web_read escalates from fast HTTP through fingerprinting and Readability to CloakBrowser only as needed, then returns ranked excerpts">
+</p>
 
-`web_read` `auto` mode escalates: fast HTTP → TLS-fingerprint fetch (if blocked) → `rel=alternate` fallback (if thin) → Readability (if sparse) → CloakBrowser (if still thin/SPA).
-
-Also follows short client-side meta-refresh redirects (≤10s delay, max 5 hops) and surfaces page metadata when available: **author**, **published**, **site**, **language**.
-
-**GitHub issues / PRs** (`github.com/{owner}/{repo}/issues|pull/{n}`) are fetched via the **GitHub REST API** (`mode: github-api`) instead of HTML — bodies and comments come through cleanly. Optional `GITHUB_TOKEN` / `GH_TOKEN` for private repos and higher rate limits. Force HTML/browser with `mode: "browser"`.
-
-Toggle a visible browser window for one-shot `web_read` via config or tool param:
-
-```json
-"read": { "headless": false }
-```
-
-Or per call: `web_read({ url, headless: false })`.
-
-### CloakBrowser downloads & profiles
-
-For **web_cowork**, the window is always headed. Persist logins with:
-
-```json
-"cowork": {
-  "userDataDir": "~/.cloakbrowser/cowork-profile",
-  "downloadDir": "~/Downloads"
-}
-```
-
-Downloads default to `~/Downloads` (Chrome prefs + Playwright `downloadsPath`). Override with `cowork.downloadDir` — this applies to both `web_cowork` sessions and `web_read` browser renders.
-
-### CloakBrowser update notices
-
-CloakBrowser checks for a newer stealth Chromium on launch and logs progress with plain `console.log` / `console.warn` (`[cloakbrowser] Newer Chromium available…`). Pi's TUI owns stdout with differential rendering, so those unaccounted writes shift the cursor and the notice appears to land **inside the input box**.
-
-The extension installs a console filter at startup that drops `[cloakbrowser]`-tagged lines. Updates still run normally — only the terminal output is suppressed. Set `DEBUG=1` to see them again, or `CLOAKBROWSER_AUTO_UPDATE=false` to stop the checks entirely.
-
-### Footer status
-
-By default the footer is empty until something is used this session. Successful fetches accumulate into one clean **services** list (cleared each session):
-
-- `brave, context7, serper` — search backends and Context7 that returned data this session (sorted, names only)
-- While a fetch is in flight: brief progress (`🔍 Brave: searching…`, `context7: fetching…`), then back to the list
-- While `web_cowork` is open: `🌐 cowork: …` (cleared on close; never shows `cowork: closed`)
-- `web_read` shows progress briefly, then clears
-
-Disable all footer updates with `"showStatus": false`.
-
-## Tools
-
-| Tool | Params |
-| ---- | ------ |
-| `web_search` | `query`, `numResults`, `backend`, `compact` |
-| `web_read` | `url`, `query`, `return`, `mode`, `format`, `onlyMainContent`, `maxChars`, `maxBytes`, `headless`, `savePath`, `saveDir` |
-| `web_cowork` | `action`, `url`, `mode`, `ref`, `role`, `name`, `selector`, `text`, `clear`, `key`, `deltaY`, `query`, `maxChars`, `message`, `timeoutMs` |
-| `context7` | `library`, `query`, `fast` |
-
-### web_read (excerpts by default)
-
-By default, chat gets **ranked excerpts**, not the whole page:
+`web_read` acquires the full page locally, then returns only the most relevant chunks for the query. Automatic mode escalates through fast HTTP, TLS-fingerprint fetch, alternate links, Readability, and CloakBrowser only when earlier paths are blocked or too sparse. It also follows short meta-refresh redirects up to five hops.
 
 ```text
 web_read({ url, query: "HTTP caching Cache-Control" })
 ```
 
-- Pass `query` with what you need — local keyword/heading scoring picks relevant sections (~6k char budget by default).
-- Omit `query` → page outline (headings + short lead) and a nudge to focus or request full.
-- `return: "full"` → entire main-content markdown (capped at ~12k chars in chat unless `maxChars` overrides).
-- CloakBrowser / HTTP still acquire the full page; ranking happens after markdown extraction.
-- `maxBytes` caps the download size (floored at 2 MB, default 5 MB; oversized bodies truncate rather than fail).
-
-**Multi-page / vault scrapes:** set `saveDir` (or `savePath`). Full content goes to disk; the model only gets a short summary — prevents context overflow.
+- Default: ranked excerpts with a roughly 6k-character budget.
+- No query: compact page outline.
+- `return: "full"`: complete main content, capped around 12k characters in chat.
+- `savePath` or `saveDir`: full extract goes to disk; chat receives a short summary.
+- `mode: "browser"`: force CloakBrowser rendering.
+- GitHub issues and pull requests: clean bodies and comments through GitHub REST API; optional `GITHUB_TOKEN` or `GH_TOKEN` raises limits and enables private repositories.
+- Metadata when available: author, publication date, site, and language.
+- `maxBytes`: download cap with a 2 MB floor and 5 MB default; oversized bodies truncate instead of failing.
 
 ```text
 web_read({ url, mode: "browser", saveDir: "~/vault/http-caching" })
 ```
 
-Safety: URLs are validated before fetching — only http/https, and requests to localhost, private IP ranges, and common internal/metadata hostnames are refused (hostname-level check; no DNS resolution).
+URLs are restricted to HTTP(S). Requests to localhost, private IP ranges, and common internal or metadata hostnames are refused. This validation is hostname-level and does not resolve DNS.
 
-### web_cowork (shared control)
+## Search with fallback
 
-Opens a persistent visible CloakBrowser session so you and the agent can both interact with the page.
+Auto mode shuffles enabled backends that have resolvable keys. Empty results and provider failures move to the next backend; aborts stop immediately.
 
-| Action | Purpose |
-| ------ | ------- |
-| `open` | Launch (or reuse) headed session and goto `url` |
-| `navigate` | Goto `url` in the existing session |
-| `wait` | Pause for user interaction (UI prompt when available) |
-| `snapshot` | **Default: interactive refs** (`@e1`…) for clicking; `mode=content` / `query` for reading |
-| `click` / `type` / `press` / `scroll` | Prefer `ref: "@e3"` from the last snapshot (role+name / text / CSS as fallback) |
-| `status` / `close` | Session state / tear down |
+- Pin a provider with `backend: "brave"`, `"serper"`, `"tavily"`, `"exa"`, or `"linkup"`.
+- Use `compact: true` for title-and-URL results while exploring.
+- Limit `numResults` from 1 to 20.
+- Set defaults in `web.json`.
 
-Typical flow:
+Key resolution order for every `apiKeyEnv`:
+
+1. `process.env[apiKeyEnv]`
+2. `.pi/web.env`
+3. `~/.pi/agent/web.env`
+4. Legacy literal `apiKey` in JSON
+
+Legacy JSON paths remain supported when the new paths are absent: `~/.pi/agent/extensions/search.json` and `.pi/search.json`.
+
+## Work together in a visible browser
+
+`web_cowork` keeps one headed CloakBrowser session open so the agent and user can share control. Use it for authentication, CAPTCHA, and stateful browser workflows; use `web_read` for one-shot extraction.
 
 ```text
 web_cowork({ action: "open", url: "https://example.com/login" })
 web_cowork({ action: "wait", message: "Log in, then continue" })
-web_cowork({ action: "snapshot" })
-web_cowork({ action: "click", ref: "@e3" })
-web_cowork({ action: "type", ref: "@e5", text: "hello", clear: true })
-web_cowork({ action: "snapshot" })
+web_cowork({
+  action: "batch",
+  fills: [
+    { ref: "@e3", text: "name@example.com" },
+    { ref: "@e4", text: "hello" }
+  ],
+  clickRef: "@e5"
+})
 web_cowork({ action: "close" })
 ```
 
-Snapshot modes: `interactive` (default), `content` (markdown/excerpts), `both`. Refs are invalidated after click/navigate/wait/scroll — always snapshot again before the next action. Values of password/secret-looking fields are shown as `[redacted]` in snapshots.
+State-changing actions return fresh, bounded interactive refs. `snapshot` supports `interactive`, `content`, and `both` modes. Password and secret-looking values appear as `[redacted]`.
 
-Prefer `web_read` for one-shot extraction without user interaction.
+Persist sessions and choose a download directory with:
 
-### Browser inside a Herdr pane (opt-in)
+```json
+{
+  "cowork": {
+    "userDataDir": "~/.cloakbrowser/cowork-profile",
+    "downloadDir": "~/Downloads"
+  }
+}
+```
 
-Instead of a separate desktop window, cowork can render Chromium **inside a
-[Herdr](https://herdr.dev) pane**: the agent drives the browser, you watch it in
-the layout you are already working in, and you can take over with the mouse and
-keyboard without detaching the agent.
+Downloads default to `~/Downloads` and apply to cowork sessions and browser-rendered reads.
 
-Off by default. Enable it under `cowork.herdr` in `web.json`:
+<details>
+<summary><strong>Run CloakBrowser inside a Herdr pane</strong></summary>
+
+Enable the opt-in [Herdr](https://herdr.dev) integration:
 
 ```json
 {
@@ -244,90 +176,99 @@ Off by default. Enable it under `cowork.herdr` in `web.json`:
 }
 ```
 
-| Key | Default | Meaning |
+| Setting | Default | Meaning |
 | --- | --- | --- |
-| `enabled` | `false` | Render in a Herdr pane instead of a desktop window |
-| `direction` | `"right"` | Split direction |
-| `focusOnOpen` | `true` | Focus the browser pane when it opens |
-| `browserZoom` | `0.75` | Initial page zoom, `0.5`–`2.5` |
-| `showDiagnostics` | `false` | Bottom row with stream/viewport metrics |
-| `captureScale` | `1` | Shrink transferred frames (`0.1`–`1`). Best CPU knob |
-| `screencastEveryNthFrame` | `1` | `2` halves the producer frame rate |
-| `fallbackToWindow` | `true` | Open a normal window if the pane can't start |
-| `cdpPort` | `0` | `0` picks a free loopback port |
+| `enabled` | `false` | Render inside Herdr instead of a desktop window |
+| `direction` | `"right"` | Pane split direction |
+| `focusOnOpen` | `true` | Focus browser pane when opened |
+| `browserZoom` | `0.75` | Initial page zoom, from `0.5` to `2.5` |
+| `showDiagnostics` | `false` | Show stream and viewport metrics |
+| `captureScale` | `1` | Scale transferred frames from `0.1` to `1` |
+| `screencastEveryNthFrame` | `1` | Use `2` to halve producer frame rate |
+| `fallbackToWindow` | `true` | Open normal window when pane startup fails |
+| `cdpPort` | `0` | Pick a free loopback port automatically |
 
-**In-pane controls**
+Requirements:
 
-| Input | Action |
-| --- | --- |
-| click / drag / scroll | Forwarded to the page |
-| typing | Forwarded to the focused element |
-| `ctrl+l` | Edit the URL bar (`Enter` to go, `Esc` to cancel) |
-| `ctrl+r` / `ctrl+t` / `ctrl+q` | Reload / new tab / close the view |
-| toolbar row 1 | Tab strip: click to select, `[x]` close, `[+]` new |
-| toolbar row 2 | `[<] [>] [r] [-] [+]` and the URL |
+1. Herdr 0.7.4+ with Pi running in a Herdr pane.
+2. `kitty_graphics = true` under `[experimental]` in `~/.config/herdr/config.toml`.
+3. `herdr server reload-config`, then restart the Herdr client. Clients attached before graphics were enabled can report a 0px cell size and drop every frame.
+4. Ghostty, kitty, WezTerm, or another Kitty-graphics terminal.
 
-#### Requirements (all four, or it falls back)
+When a requirement is missing, cowork reports why and opens a normal window. Set `fallbackToWindow: false` to make setup failure a hard error.
 
-1. Herdr **0.7.4+**, and Pi running inside a Herdr pane.
-2. Experimental graphics enabled in `~/.config/herdr/config.toml`:
-   ```toml
-   [experimental]
-   kitty_graphics = true
-   ```
-   then `herdr server reload-config`.
-3. **Restart the Herdr client** (detach and re-attach, or quit and run `herdr`).
-   A client that attached *before* the flag was on reports a `0px` cell size and
-   Herdr silently drops every frame. This is the most common cause of a blank pane.
-4. A Kitty-graphics terminal: Ghostty, kitty, or WezTerm.
-
-When any of these is missing, cowork prints why and opens a normal desktop
-window instead (set `fallbackToWindow: false` to make it a hard error).
-
-#### Verify the setup
-
-From a Herdr pane:
+Verify setup:
 
 ```bash
 npm run verify:herdr -- https://example.com
 ```
 
-It checks graphics support, launches a headless browser, opens the pane, and
-tells you what to click. Press `q` or `Ctrl+C` to tear it down. View errors go
-to `/tmp/pi-herdr-view.log`.
+Add `--seconds 20` for timed exit or `--check` to validate without opening a pane. View errors go to `/tmp/pi-herdr-view.log`. Use `PI_HERDR_VIEW_RUNNER` to override the view runtime.
 
-Add `--seconds 20` to exit on its own (useful in scripts), or `--check` to test
-graphics support and the browser launch without opening a pane.
+Pane controls:
 
-**Runtime:** the view uses `bun` when available, otherwise the packaged `tsx`
-runtime. Plain `node --experimental-strip-types` cannot resolve this repo's
-`.js` import specifiers to `.ts` files. Override the executable path with
-`PI_HERDR_VIEW_RUNNER`.
+| Input | Action |
+| --- | --- |
+| Click, drag, scroll, type | Forward input to page |
+| `ctrl+l` | Edit URL; `Enter` navigates, `Esc` cancels |
+| `ctrl+r`, `ctrl+t`, `ctrl+q` | Reload, new tab, close view |
+| Toolbar row 1 | Select, close, or create tabs |
+| Toolbar row 2 | Back, forward, reload, zoom, URL |
 
-#### How it works
+The view uses `bun` when available, otherwise packaged `tsx`. Pi retains its Playwright handle while a small pane process attaches over loopback CDP, streams backpressured screencast frames, and forwards input. Closing the pane does not kill the browser.
 
-Pi owns Chromium through CloakBrowser and keeps its Playwright handle, so every
-`web_cowork` action works exactly the same in either mode. Chromium is launched
-headless with a loopback `--remote-debugging-port`; a small view process in the
-pane attaches over CDP, pushes `Page.screencast` frames to Herdr's
-`pane.graphics.stream`, and translates SGR mouse reports and key sequences back
-into `Input.dispatch*`. Closing the pane does not kill the browser, and the CDP
-port stays on loopback.
+**Security:** Herdr mode exposes unauthenticated Chrome DevTools Protocol on loopback while cowork is open. Use it only on trusted, single-user hosts. User-driven navigation can reach local network services.
 
-Frame pacing: 15 FPS passive, 30 FPS for 750 ms after direct input, with
-`Page.screencastFrameAck` delayed to apply backpressure before Chromium encodes
-a frame nobody will see. A settled page sends almost nothing.
+The pane view does not implement downloads, context menus, DevTools, IME, text selection, or find-in-page. Frame transport is tuned for local sessions, not remote SSH.
 
-**Security:** Herdr mode exposes unauthenticated Chrome DevTools Protocol on
-loopback while the cowork session is open. Use it only on trusted, single-user
-hosts. Cowork is an interactive browser; user-driven navigation can reach local
-network services.
+</details>
 
-Not supported: downloads, right-click menus, DevTools, IME, text selection, and
-find-in-page. Frame bandwidth is tuned for local sessions, not remote SSH.
+## Get current library docs
+
+`context7` resolves a plain package name or accepts a Context7 library ID, then returns documentation ranked for the task. Get an API key at [context7.com/dashboard](https://context7.com/dashboard).
+
+```text
+context7({ library: "next.js", query: "app router middleware auth" })
+context7({ library: "/vercel/next.js/v14.3.0", query: "server actions form validation" })
+```
+
+- Registered only when a Context7 key resolves.
+- IDs can be version-pinned with `/v14.3.0` or `@v14.3.0`.
+- Results are capped at 12k characters; narrow the query when truncated.
+- `fast: true` skips LLM reranking for lower latency and lower relevance.
+- Set `"enabled": false` to keep the key configured while hiding the tool.
+
+## Tool reference
+
+| Tool | Parameters |
+| --- | --- |
+| `web_search` | `query`, `numResults`, `backend`, `compact` |
+| `web_read` / `web_fetch` | `url`, `query`, `return`, `mode`, `format`, `onlyMainContent`, `maxChars`, `maxBytes`, `headless`, `savePath`, `saveDir` |
+| `web_cowork` | `action`, `url`, `mode`, `ref`, `role`, `name`, `selector`, `text`, `clear`, `fills`, `clickRef`, `key`, `deltaY`, `query`, `maxChars`, `message`, `timeoutMs` |
+| `context7` | `library`, `query`, `fast` |
+
+### Cowork actions
+
+| Action | Purpose |
+| --- | --- |
+| `open`, `navigate` | Open or move the shared browser and return fresh refs |
+| `wait` | Pause for user input, then return optional note and fresh refs |
+| `snapshot` | Read interactive refs, content, or both |
+| `click`, `type`, `press`, `scroll` | Act on the latest ref; role and name are fallbacks |
+| `batch` | Fill 1–10 fields, then optionally click once |
+| `status`, `close` | Inspect or end the session |
+
+## Runtime behavior
+
+- Node.js 20.18.1+ is required.
+- `postinstall` runs `cloakbrowser install` and stores stealth Chromium under `~/.cloakbrowser/`.
+- CloakBrowser checks for browser updates at launch. Tagged update logs are hidden because direct console output corrupts Pi's TUI; set `DEBUG=1` to show them or `CLOAKBROWSER_AUTO_UPDATE=false` to disable checks.
+- Footer status remains empty until a service is used. Successful providers accumulate as a sorted service list; active reads and cowork sessions show brief progress.
+- Set `"showStatus": false` to disable footer updates.
+- Set `"read": { "headless": false }` or pass `headless: false` to show browser-rendered one-shot reads.
 
 ## License
 
-This package is MIT-licensed. See [LICENSE](./LICENSE).
+[MIT](./LICENSE)
 
-**Third-party note:** [CloakBrowser](https://github.com/CloakHQ/CloakBrowser) is a dependency. Its JavaScript wrapper is MIT, but the Chromium binary downloaded by `postinstall` / `cloakbrowser install` is covered by CloakBrowser’s separate binary license — not by this package’s MIT license. See CloakBrowser’s [LICENSE](https://github.com/CloakHQ/CloakBrowser/blob/main/LICENSE) and [BINARY-LICENSE.md](https://github.com/CloakHQ/CloakBrowser/blob/main/BINARY-LICENSE.md).
+CloakBrowser's JavaScript wrapper is MIT-licensed. Its downloaded Chromium binary uses CloakBrowser's separate binary license; see its [LICENSE](https://github.com/CloakHQ/CloakBrowser/blob/main/LICENSE) and [BINARY-LICENSE.md](https://github.com/CloakHQ/CloakBrowser/blob/main/BINARY-LICENSE.md).

@@ -16,6 +16,7 @@ import { noteServiceUsed, refreshServicesStatus, setServiceProgress } from "../s
 import { sanitizeError, timeoutSignal } from "../utils.js";
 
 const API_BASE = "https://context7.com/api/v2";
+const CONTEXT7_MAX_CHARS = 12_000;
 /** Context7 library IDs look like /org/repo or /org/repo/version. */
 const LIBRARY_ID_RE = /^\/[^/]+\/[^/]+([/@][^/]+)?$/;
 
@@ -49,6 +50,23 @@ interface LibraryHit {
 	description?: string;
 	trustScore?: number;
 	totalSnippets?: number;
+}
+
+export function truncateContext7(text: string): {
+	text: string;
+	truncated: boolean;
+	chars: number;
+} {
+	const chars = text.length;
+	if (chars <= CONTEXT7_MAX_CHARS) return { text, truncated: false, chars };
+	const bodyLimit = CONTEXT7_MAX_CHARS - 80;
+	const newline = text.lastIndexOf("\n", bodyLimit);
+	const end = newline >= bodyLimit * 0.8 ? newline : bodyLimit;
+	return {
+		text: `${text.slice(0, end)}\n…[truncated: ${chars - end} chars omitted; narrow query for more]`,
+		truncated: true,
+		chars,
+	};
 }
 
 /** Resolve a plain library name ("next.js") to a Context7 library ID ("/vercel/next.js"). */
@@ -145,9 +163,15 @@ export function registerContext7(pi: ExtensionAPI): void {
 				const header = hit
 					? `Context7: ${hit.title || libraryId} (${libraryId})\n\n`
 					: `Context7: ${libraryId}\n\n`;
+				const output = truncateContext7(header + (text.trim() || "No documentation found."));
 				return {
-					content: [{ type: "text", text: header + (text.trim() || "No documentation found.") }],
-					details: { libraryId, query: params.query },
+					content: [{ type: "text", text: output.text }],
+					details: {
+						libraryId,
+						query: params.query,
+						chars: output.chars,
+						truncated: output.truncated,
+					},
 				};
 			} catch (err) {
 				refreshServicesStatus(ctx.ui);

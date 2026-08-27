@@ -15,6 +15,7 @@ import {
 	buildInteractiveSnapshot,
 	clearCoworkRefs,
 	prepareAndAct,
+	runFillBatch,
 } from "./refs.js";
 import {
 	closeCoworkSession,
@@ -26,7 +27,9 @@ import {
 } from "./session.js";
 
 const DEFAULT_SNAPSHOT_MAX_CHARS = 6_000;
+const POST_ACTION_MAX_CHARS = 4_000;
 const DEFAULT_WAIT_TIMEOUT_MS = 120_000;
+const MAX_WAIT_NOTE_CHARS = 1_000;
 
 const coworkParameters = Type.Object({
 	action: StringEnum(
@@ -39,13 +42,14 @@ const coworkParameters = Type.Object({
 			"type",
 			"press",
 			"scroll",
+			"batch",
 			"status",
 			"close",
 		] as const,
 		{
 			description:
-				"Cowork action. Prefer: open → snapshot → click/type with ref (@eN) → snapshot again. " +
-				"snapshot defaults to interactive element refs. click/type should use ref from the last snapshot.",
+				"Cowork action. open and state-changing actions return fresh interactive refs. " +
+				"Use snapshot for content or a manual observation; batch fills 1–10 fields then optionally clicks once.",
 		},
 	),
 	url: Type.Optional(
@@ -64,7 +68,7 @@ const coworkParameters = Type.Object({
 	ref: Type.Optional(
 		Type.String({
 			description:
-				'Element ref from the last interactive snapshot, e.g. "@e3" or "e3". Preferred for click/type/press/scroll.',
+				'Element ref from the latest result, e.g. "@e3" or "e3". Preferred for click/type/press/scroll.',
 		}),
 	),
 	role: Type.Optional(
@@ -97,6 +101,25 @@ const coworkParameters = Type.Object({
 			default: true,
 		}),
 	),
+	fills: Type.Optional(
+		Type.Array(
+			Type.Object({
+				ref: Type.String({ description: "Field ref from one snapshot." }),
+				text: Type.String({ description: "Value to enter." }),
+				clear: Type.Optional(Type.Boolean({ default: true })),
+			}),
+			{
+				description: "For action=batch: 1–10 fields from one snapshot, filled in order.",
+				minItems: 1,
+				maxItems: 10,
+			},
+		),
+	),
+	clickRef: Type.Optional(
+		Type.String({
+			description: "For action=batch: optional final click ref from the same snapshot.",
+		}),
+	),
 	key: Type.Optional(
 		Type.String({
 			description: "Key to press (action=press), e.g. Enter, Tab, Escape.",
@@ -121,7 +144,7 @@ const coworkParameters = Type.Object({
 	message: Type.Optional(
 		Type.String({
 			description:
-				"Message shown while waiting for the user (action=wait). " +
+				"Message shown while waiting for the user (action=wait). User may press Enter, add a note, or cancel. " +
 				'Default: "Finish in the browser, then continue."',
 		}),
 	),
@@ -142,6 +165,7 @@ type CoworkParams = {
 		| "type"
 		| "press"
 		| "scroll"
+		| "batch"
 		| "status"
 		| "close";
 	url?: string;
@@ -152,6 +176,8 @@ type CoworkParams = {
 	selector?: string;
 	text?: string;
 	clear?: boolean;
+	fills?: Array<{ ref: string; text: string; clear?: boolean }>;
+	clickRef?: string;
 	key?: string;
 	deltaY?: number;
 	query?: string;
@@ -234,6 +260,17 @@ async function contentSnapshot(
 	};
 }
 
+async function postActionSnapshot(
+	page: Awaited<ReturnType<typeof requireCoworkSession>>["page"],
+) {
+	clearCoworkRefs();
+	try {
+		return await buildInteractiveSnapshot(page, { maxChars: POST_ACTION_MAX_CHARS });
+	} catch {
+		return { refs: [], text: "(Interactive observation unavailable; call snapshot.)" };
+	}
+}
+
 function targetFromParams(
 	params: CoworkParams,
 	opts: { textIsClickTarget?: boolean } = {},
@@ -286,6 +323,7 @@ async function executeCowork(
 				},
 			});
 			const nav = await navigateCoworkPage(page, params.url.trim(), undefined, signal);
+			const observation = await postActionSnapshot(page);
 			progress(ctx, onUpdate, `🌐 cowork: ${nav.title || nav.url}`);
 			return textResult(
 				[
@@ -297,10 +335,15 @@ async function executeCowork(
 					`HTTP: ${nav.status}`,
 					...(notes.length ? [``, ...notes] : []),
 					``,
-					`Next: action=snapshot (interactive refs), then click/type with ref="@eN".`,
-					`If the user must log in / solve a CAPTCHA first: action=wait, then snapshot.`,
+					observation.text,
 				].join("\n"),
-				{ action: "open", ...nav, open: true, herdrPaneId: herdr?.paneId },
+				{
+					action: "open",
+					...nav,
+					open: true,
+					herdrPaneId: herdr?.paneId,
+					refCount: observation.refs.length,
+				},
 			);
 		}
 
@@ -309,6 +352,7 @@ async function executeCowork(
 			progress(ctx, onUpdate, "🌐 cowork: navigating…");
 			const { page } = await requireCoworkSession();
 			const nav = await navigateCoworkPage(page, params.url.trim(), undefined, signal);
+			const observation = await postActionSnapshot(page);
 			progress(ctx, onUpdate, `🌐 cowork: ${nav.title || nav.url}`);
 			return textResult(
 				[
@@ -316,9 +360,10 @@ async function executeCowork(
 					`Title: ${nav.title || "(none)"}`,
 					`URL: ${nav.url}`,
 					`HTTP: ${nav.status}`,
-					`Refs invalidated — call snapshot before clicking.`,
+					``,
+					observation.text,
 				].join("\n"),
-				{ action: "navigate", ...nav, open: true },
+				{ action: "navigate", ...nav, open: true, refCount: observation.refs.length },
 			);
 		}
 
@@ -382,11 +427,29 @@ async function executeCowork(
 			progress(ctx, onUpdate, "🌐 cowork: waiting for user…");
 			clearCoworkRefs();
 
+			let note: string | undefined;
+			let cancelled = false;
+			let timedOut = false;
 			if (ctx.hasUI) {
 				ctx.ui.notify(message, "info");
-				await ctx.ui.input(message, {
-					placeholder: "Press Enter when done in the browser",
-				});
+				const reply = await ctx.ui.input(
+					message,
+					"Enter when done, optional note; Esc cancels",
+					{ signal },
+				);
+				if (signal.aborted) {
+					throw signal.reason instanceof Error
+						? signal.reason
+						: new DOMException("Aborted", "AbortError");
+				}
+				cancelled = reply === undefined;
+				const trimmed = reply?.trim();
+				if (trimmed) {
+					note =
+						trimmed.length > MAX_WAIT_NOTE_CHARS
+							? `${trimmed.slice(0, MAX_WAIT_NOTE_CHARS)}…`
+							: trimmed;
+				}
 			} else {
 				onUpdate({
 					content: [
@@ -397,7 +460,6 @@ async function executeCowork(
 					],
 				});
 				await new Promise<void>((resolve, reject) => {
-					const timer = setTimeout(resolve, timeoutMs);
 					const onAbort = () => {
 						clearTimeout(timer);
 						reject(
@@ -406,15 +468,23 @@ async function executeCowork(
 								: new DOMException("Aborted", "AbortError"),
 						);
 					};
+					const timer = setTimeout(() => {
+						signal.removeEventListener("abort", onAbort);
+						resolve();
+					}, timeoutMs);
 					if (signal.aborted) {
 						onAbort();
 						return;
 					}
 					signal.addEventListener("abort", onAbort, { once: true });
 				});
+				timedOut = true;
 			}
 
 			const status = await getCoworkStatus();
+			const observation = status.open
+				? await postActionSnapshot((await requireCoworkSession()).page)
+				: { refs: [], text: "" };
 			if (status.open) {
 				progress(ctx, onUpdate, `🌐 cowork: ${status.title || status.url || "ready"}`);
 			} else {
@@ -422,12 +492,21 @@ async function executeCowork(
 			}
 			return textResult(
 				[
-					`Wait finished.`,
+					cancelled ? `Wait cancelled by user.` : timedOut ? `Wait timed out.` : `Wait finished.`,
+					...(note ? [`User note: ${note}`] : []),
 					status.open
-						? `Session still open at: ${status.url ?? "(unknown)"}\nTitle: ${status.title || "(none)"}\nRefs invalidated — call snapshot before clicking.`
+						? `Session still open at: ${status.url ?? "(unknown)"}\nTitle: ${status.title || "(none)"}`
 						: `Session is no longer open.`,
+					...(observation.text ? [``, observation.text] : []),
 				].join("\n"),
-				{ action: "wait", ...status },
+				{
+					action: "wait",
+					...status,
+					cancelled,
+					timedOut,
+					note,
+					refCount: observation.refs.length,
+				},
 			);
 		}
 
@@ -448,13 +527,17 @@ async function executeCowork(
 				},
 				{ signal },
 			);
-			clearCoworkRefs();
+			const observation = await postActionSnapshot(page);
 			progress(ctx, onUpdate, `🌐 cowork: ${await page.title().catch(() => page.url())}`);
 			return textResult(
-				[`Clicked via ${how}`, `URL: ${page.url()}`, `Refs invalidated — snapshot before next action.`].join(
-					"\n",
-				),
-				{ action: "click", how, url: page.url(), open: true },
+				[`Clicked via ${how}`, `URL: ${page.url()}`, ``, observation.text].join("\n"),
+				{
+					action: "click",
+					how,
+					url: page.url(),
+					open: true,
+					refCount: observation.refs.length,
+				},
 			);
 		}
 
@@ -476,8 +559,10 @@ async function executeCowork(
 					if (clear) {
 						await loc.fill(params.text!, { timeout: ACTION_TIMEOUT_MS });
 					} else {
-						await loc.click({ timeout: ACTION_TIMEOUT_MS });
-						await page.keyboard.type(params.text!, { delay: 20 });
+						await loc.pressSequentially(params.text!, {
+							delay: 20,
+							timeout: ACTION_TIMEOUT_MS,
+						});
 					}
 				},
 				{ signal },
@@ -494,6 +579,47 @@ async function executeCowork(
 			});
 		}
 
+		case "batch": {
+			const fills = params.fills ?? [];
+			if (fills.length === 0 || fills.length > 10) {
+				throw new Error("action=batch requires 1–10 fills from one snapshot");
+			}
+			const { page } = await requireCoworkSession();
+			progress(ctx, onUpdate, `🌐 cowork: fill ${fills.length} field(s)…`);
+			let result: Awaited<ReturnType<typeof runFillBatch>>;
+			try {
+				result = await runFillBatch(
+					page,
+					fills,
+					params.clickRef?.trim() || undefined,
+					signal,
+				);
+			} catch (err) {
+				if (signal.aborted) throw err;
+				const observation = await postActionSnapshot(page);
+				throw new Error(
+					`${err instanceof Error ? err.message : String(err)}\n\n${observation.text}`,
+				);
+			}
+			const observation = await postActionSnapshot(page);
+			progress(ctx, onUpdate, `🌐 cowork: ${await page.title().catch(() => page.url())}`);
+			return textResult(
+				[
+					`Filled ${result.filled} field(s)${result.clicked ? " and clicked final ref" : ""}.`,
+					`URL: ${page.url()}`,
+					``,
+					observation.text,
+				].join("\n"),
+				{
+					action: "batch",
+					...result,
+					url: page.url(),
+					open: true,
+					refCount: observation.refs.length,
+				},
+			);
+		}
+
 		case "press": {
 			if (!params.key?.trim()) throw new Error("action=press requires key");
 			const { page } = await requireCoworkSession();
@@ -508,21 +634,29 @@ async function executeCowork(
 					},
 					{ signal },
 				);
-				clearCoworkRefs();
+				const observation = await postActionSnapshot(page);
 				progress(ctx, onUpdate, `🌐 cowork: ${await page.title().catch(() => page.url())}`);
 				return textResult(
-					[`Pressed ${key} on ${how}`, `Refs invalidated — snapshot before next action.`].join("\n"),
-					{ action: "press", key, how, url: page.url(), open: true },
+					[`Pressed ${key} on ${how}`, ``, observation.text].join("\n"),
+					{
+						action: "press",
+						key,
+						how,
+						url: page.url(),
+						open: true,
+						refCount: observation.refs.length,
+					},
 				);
 			}
 			await page.keyboard.press(key);
-			clearCoworkRefs();
+			const observation = await postActionSnapshot(page);
 			progress(ctx, onUpdate, `🌐 cowork: ${await page.title().catch(() => page.url())}`);
-			return textResult(`Pressed ${key}`, {
+			return textResult([`Pressed ${key}`, ``, observation.text].join("\n"), {
 				action: "press",
 				key,
 				url: page.url(),
 				open: true,
+				refCount: observation.refs.length,
 			});
 		}
 
@@ -539,24 +673,31 @@ async function executeCowork(
 					},
 					{ signal },
 				);
-				clearCoworkRefs();
+				const observation = await postActionSnapshot(page);
 				progress(ctx, onUpdate, `🌐 cowork: ${await page.title().catch(() => page.url())}`);
 				return textResult(
-					`Scrolled into view: ${how}. Refs invalidated — snapshot before next action.`,
+					[`Scrolled into view: ${how}.`, ``, observation.text].join("\n"),
 					{
 						action: "scroll",
 						how,
 						url: page.url(),
 						open: true,
+						refCount: observation.refs.length,
 					},
 				);
 			}
 			await page.mouse.wheel(0, deltaY);
-			clearCoworkRefs();
+			const observation = await postActionSnapshot(page);
 			progress(ctx, onUpdate, `🌐 cowork: ${await page.title().catch(() => page.url())}`);
 			return textResult(
-				`Scrolled by deltaY=${deltaY}. Refs invalidated — snapshot again if you need to click.`,
-				{ action: "scroll", deltaY, url: page.url(), open: true },
+				[`Scrolled by deltaY=${deltaY}.`, ``, observation.text].join("\n"),
+				{
+					action: "scroll",
+					deltaY,
+					url: page.url(),
+					open: true,
+					refCount: observation.refs.length,
+				},
 			);
 		}
 
@@ -599,9 +740,9 @@ async function executeCowork(
 const coworkGuidelines = [
 	"Use web_cowork when the user must see/interact with a page (login, CAPTCHA, multi-step UI) or asks to co-drive a browser",
 	"Prefer web_read for one-shot page extraction without user interaction",
-	"ALWAYS snapshot before click/type. Default snapshot is interactive refs (@e1, @e2…). Pass ref=\"@e3\" — do NOT invent CSS selectors",
-	"After click, navigate, wait, or scroll: refs are invalidated — snapshot again before the next action",
-	"Typical flow: open → (wait if user must log in) → snapshot → click/type with ref → snapshot → … → close",
+	"Use refs from the latest web_cowork result for click/type/batch; do not invent refs or CSS selectors",
+	"open, navigate, wait, click, press, scroll, and batch return fresh refs; call snapshot only when you need content or a fresh manual observation",
+	"Use web_cowork batch for multiple field fills from one snapshot, with at most one final click",
 	"Use snapshot mode=content (or query=…) only when reading page text; use interactive (default) when acting",
 	"Fallback if ref missing: role+name (e.g. role=button name=Submit). CSS selector is last resort",
 ];
@@ -610,13 +751,14 @@ export function registerWebCowork(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "web_cowork",
 		label: "Web Cowork",
+		executionMode: "sequential",
 		description:
 			"Open a visible CloakBrowser window for shared control with the user. " +
-			"Snapshot returns interactive element refs (@e1…); click/type with ref from that list. " +
-			"Actions: open, navigate, wait, snapshot, click, type, press, scroll, status, close. " +
+			"Actions return fresh interactive refs (@e1…); click/type/batch with refs from the latest result. " +
+			"Actions: open, navigate, wait, snapshot, click, type, press, scroll, batch, status, close. " +
 			"Prefer web_read for one-shot extraction.",
 		promptSnippet:
-			"Visible CloakBrowser cowork — snapshot refs then click/type with @eN",
+			"Visible CloakBrowser cowork — act with refs returned by each browser step",
 		promptGuidelines: coworkGuidelines,
 		parameters: coworkParameters,
 		execute: executeCowork,

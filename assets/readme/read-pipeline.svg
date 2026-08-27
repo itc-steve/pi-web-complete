@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="330" viewBox="0 0 1200 330" role="img" aria-labelledby="title desc">
+  <title id="title">web_read escalation pipeline</title>
+  <desc id="desc">A URL moves through fast HTTP, TLS fingerprinting, readability extraction, and CloakBrowser only as needed, then becomes query-ranked context.</desc>
+  <rect width="1200" height="330" rx="24" fill="#081018"/>
+  <rect x="1" y="1" width="1198" height="328" rx="23" fill="none" stroke="#243342" stroke-width="2"/>
+
+  <text x="56" y="55" fill="#7f93a8" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" letter-spacing="3">WEB_READ / LOCAL EXTRACTION</text>
+  <text x="56" y="101" fill="#f4f7fb" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="34" font-weight="650">Escalate only when the page demands it.</text>
+
+  <path d="M130 205H868" stroke="#304456" stroke-width="3"/>
+  <path d="M853 195L869 205L853 215" fill="none" stroke="#304456" stroke-width="3"/>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+    <g transform="translate(56 166)">
+      <rect width="148" height="78" rx="12" fill="#0d1823" stroke="#59d9e8" stroke-width="2"/>
+      <text x="16" y="30" fill="#8fa3b7" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13">01</text>
+      <text x="16" y="56" fill="#edf5fa" font-size="18">fast HTTP</text>
+    </g>
+    <g transform="translate(228 166)">
+      <rect width="188" height="78" rx="12" fill="#0d1823" stroke="#4da9bd" stroke-width="2"/>
+      <text x="16" y="30" fill="#8fa3b7" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13">02 · IF BLOCKED</text>
+      <text x="16" y="56" fill="#edf5fa" font-size="18">TLS fingerprint</text>
+    </g>
+    <g transform="translate(440 166)">
+      <rect width="176" height="78" rx="12" fill="#0d1823" stroke="#5a8797" stroke-width="2"/>
+      <text x="16" y="30" fill="#8fa3b7" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13">03 · IF SPARSE</text>
+      <text x="16" y="56" fill="#edf5fa" font-size="18">Readability</text>
+    </g>
+    <g transform="translate(640 166)">
+      <rect width="188" height="78" rx="12" fill="#2a2416" stroke="#f3c96b" stroke-width="2"/>
+      <text x="16" y="30" fill="#baa86f" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13">04 · IF DYNAMIC</text>
+      <text x="16" y="56" fill="#fff7e1" font-size="18">CloakBrowser</text>
+    </g>
+    <g transform="translate(876 157)">
+      <rect width="268" height="96" rx="12" fill="#12271f" stroke="#68e0a1" stroke-width="2"/>
+      <text x="18" y="32" fill="#85b99a" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13">RETURN</text>
+      <text x="18" y="58" fill="#edf8f1" font-size="18">ranked excerpts</text>
+      <text x="18" y="80" fill="#a8c9b5" font-size="14">focused, bounded context</text>
+    </g>
+  </g>
+
+  <text x="56" y="292" fill="#8fa3b7" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="17">Full page and vault-save modes remain explicit; browser rendering is fallback, not default.</text>
+</svg>

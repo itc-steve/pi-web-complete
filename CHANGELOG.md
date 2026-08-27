@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.0.0 - 2026-08-27
+
+### Added
+
+- `web_cowork` now returns bounded, viewport-first refs after browser actions.
+- Added narrow `batch` form filling with one optional final click.
+- `wait` now returns user notes and cancellation state.
+
+### Changed
+
+- Context7 output is capped at 12k characters.
+
+### Removed
+
+- **Breaking:** Retired the `web_fetch_and_index` alias; use `web_read` or `web_fetch`.
+
 ## 1.3.0
 
 ### Added

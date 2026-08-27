@@ -331,7 +331,6 @@ async function executeWebRead(
 
 const sharedGuidelines = [
 	"When the user pastes a URL or asks to check/open/verify a link, forum post, or docs page — call web_read (or web_fetch)",
-	"Do NOT invent tools like web_fetch_and_index — use web_read / web_fetch for page content",
 	"By default web_read returns ranked excerpts: ALWAYS pass query describing what you need from the page",
 	"Use return=full only when the task needs the whole page or you cannot narrow focus",
 	"When saving pages to a vault/folder or scraping many URLs, ALWAYS set saveDir or savePath — never load full bodies into chat",
@@ -340,10 +339,7 @@ const sharedGuidelines = [
 	"Prefer format=markdown; avoid format=html unless savePath/saveDir is set",
 ];
 
-/**
- * Register canonical web_read plus aliases for common model hallucinations
- * (web_fetch, web_fetch_and_index).
- */
+/** Register canonical web_read plus the common web_fetch alias. */
 export function registerWebRead(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "web_read",
@@ -370,23 +366,6 @@ export function registerWebRead(pi: ExtensionAPI): void {
 			"Use return=full for the whole page. Prefer the name web_read if both are available.",
 		promptSnippet: "Fetch a URL (alias of web_read)",
 		promptGuidelines: sharedGuidelines,
-		parameters: webReadParameters,
-		execute: executeWebRead,
-	});
-
-	// Exact hallucinated name from models blending web_* with ctx_fetch_and_index
-	pi.registerTool({
-		name: "web_fetch_and_index",
-		label: "Fetch Web Page",
-		description:
-			"Alias of web_read — fetches URL content. Default: ranked excerpts (pass query). " +
-			"Does not maintain a separate search index; content is returned (or saved via savePath/saveDir) the same as web_read. " +
-			"Prefer calling web_read directly.",
-		promptSnippet: "Fetch a URL (alias of web_read; no separate index)",
-		promptGuidelines: [
-			...sharedGuidelines,
-			"This is NOT a separate indexer — it is web_read under another name",
-		],
 		parameters: webReadParameters,
 		execute: executeWebRead,
 	});
