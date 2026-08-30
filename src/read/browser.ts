@@ -1,5 +1,7 @@
 /** CloakBrowser page render. */
 
+import type { BrowserContext } from "playwright-core";
+import { installBrowserUrlGuard } from "../browser-guard.js";
 import { config } from "../config.js";
 import { validateUrl, timeoutSignal } from "../utils.js";
 import { cloakDownloadLaunchOptions, resolveDownloadDir } from "./downloads.js";
@@ -100,7 +102,13 @@ export async function renderWithCloakBrowser(
 			headless,
 			...downloadOpts.launchOptions,
 		})) as unknown as CloakBrowser;
-		const context = await browser.newContext(downloadOpts.contextOptions);
+		const context = await browser.newContext({
+			...downloadOpts.contextOptions,
+			serviceWorkers: "block",
+		});
+		const takeBlockedUrlError = await installBrowserUrlGuard(
+			context as unknown as BrowserContext,
+		);
 		const page = await context.newPage();
 		try {
 			let response: { status: () => number } | null = null;
@@ -108,9 +116,13 @@ export async function renderWithCloakBrowser(
 				response = await page.goto(url, { waitUntil: "load", timeout });
 			} catch {
 				if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+				const blocked = takeBlockedUrlError();
+				if (blocked) throw new Error(blocked);
 				response = await page.goto(url, { waitUntil: "domcontentloaded", timeout });
 			}
 			if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+			const blocked = takeBlockedUrlError();
+			if (blocked) throw new Error(blocked);
 
 			await settleAndDismissOverlays(page);
 

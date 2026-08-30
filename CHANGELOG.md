@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.0.0 - 2026-08-30
+
+### Added
+
+- Cowork developer actions for console, network, JavaScript, screenshots, accessibility, tabs, and raw page/browser CDP.
+- Configurable headless cowork sessions; external desktop window remains default. Headless applies only when creating a session.
+- `allowPrivateHosts` in global `~/.pi/agent/web.json` for trusted loopback/LAN names. Project config cannot widen it.
+- Hop-by-hop redirect checks in `web_read` fetch paths and a Playwright request guard for browser navigation.
+
+### Changed
+
+- IPv4-mapped, IPv4-compatible, and NAT64 IPv6 literals are classified as their embedded IPv4 address for SSRF checks.
+- Cross-origin redirects drop `Authorization`, `Cookie`, and `Proxy-Authorization`.
+- CDP denylist now covers Target attach/close, `Page.crash`, and `Browser.crashGpuProcess`, case-insensitively. Cookie dumps and `Runtime.evaluate` remain available on the persistent profile.
+
+### Removed
+
+- **Breaking:** Herdr pane rendering, `cowork.herdr` config, `verify:herdr`, and the unauthenticated loopback CDP endpoint.
+
 ## 2.0.0 - 2026-08-27
 
 ### Added

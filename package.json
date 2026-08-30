@@ -1,6 +1,6 @@
 {
   "name": "@itc-steve/pi-web-complete",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "Pi extension: multi-backend web_search, local web_read with query-ranked excerpts, and web_cowork shared browser control.",
   "keywords": [
     "pi-package",
@@ -10,7 +10,6 @@
     "web-read",
     "web-cowork",
     "cloakbrowser",
-    "herdr",
     "cdp"
   ],
   "author": {
@@ -41,14 +40,12 @@
     "README.md",
     "CHANGELOG.md",
     "LICENSE",
-    "scripts",
     "assets"
   ],
   "scripts": {
     "postinstall": "cloakbrowser install",
     "test": "for f in test/*.test.ts; do tsx \"$f\" || exit 1; done",
-    "typecheck": "tsc --noEmit",
-    "verify:herdr": "tsx scripts/verify-herdr-view.ts"
+    "typecheck": "tsc --noEmit"
   },
   "pi": {
     "extensions": [

@@ -4,7 +4,7 @@
  */
 
 import { fetch } from "undici";
-import { validateUrl, timeoutSignal } from "../utils.js";
+import { fetchWithSafeRedirects, hopHeaders, timeoutSignal } from "../utils.js";
 import { sanitizeForContext } from "./markdown.js";
 import type { ReadFormat } from "../types.js";
 
@@ -53,9 +53,6 @@ async function apiGet(
 	apiUrl: string,
 	options: { signal?: AbortSignal; timeoutMs?: number },
 ): Promise<{ status: number; json: unknown; finalUrl: string }> {
-	const ssrf = validateUrl(apiUrl);
-	if (ssrf) throw new Error(ssrf);
-
 	const headers: Record<string, string> = {
 		accept: "application/vnd.github+json",
 		"user-agent": "pi-web-complete",
@@ -64,15 +61,15 @@ async function apiGet(
 	const token = githubToken();
 	if (token) headers.authorization = `Bearer ${token}`;
 
-	const response = await fetch(apiUrl, {
-		method: "GET",
-		headers,
-		redirect: "follow",
-		signal: timeoutSignal(options.signal, options.timeoutMs ?? 30_000),
-	});
-	const finalUrl = response.url || apiUrl;
-	const finalSsrf = validateUrl(finalUrl);
-	if (finalSsrf) throw new Error(finalSsrf);
+	const signal = timeoutSignal(options.signal, options.timeoutMs ?? 30_000);
+	const { response, finalUrl } = await fetchWithSafeRedirects(apiUrl, (current, { crossOrigin }) =>
+		fetch(current, {
+			method: "GET",
+			headers: hopHeaders(headers, crossOrigin),
+			redirect: "manual",
+			signal,
+		}),
+	);
 
 	const text = await response.text();
 	let json: unknown = null;

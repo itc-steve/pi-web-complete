@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { BackendConfig, BackendName, SearchConfig } from "./types.js";
 import { BACKEND_NAMES } from "./types.js";
 import { loadEnvFiles, resolveBackendKey } from "./credentials.js";
-import { getAgentDir } from "./utils.js";
+import { getAgentDir, setPrivateHostAllowlist } from "./utils.js";
 
 export let config: SearchConfig = {
 	defaultBackend: "auto",
@@ -47,6 +47,9 @@ function loadConfig(cwd: string): SearchConfig {
 	}
 
 	const preProjectBackends = { ...(loaded.backends ?? {}) };
+	// Only valid preferred global config may relax host security; never legacy/project files.
+	const preferredGlobalFile = readJsonFile([join(agentDir, "web.json")]);
+	const globalAllowPrivateHosts = preferredGlobalFile?.allowPrivateHosts as unknown;
 
 	if (projectFile) {
 		const project = projectFile;
@@ -72,6 +75,10 @@ function loadConfig(cwd: string): SearchConfig {
 			loaded.backends = merged as SearchConfig["backends"];
 		}
 	}
+
+	loaded.allowPrivateHosts = Array.isArray(globalAllowPrivateHosts)
+		? (globalAllowPrivateHosts as string[])
+		: undefined;
 
 	if (
 		loaded.defaultBackend &&
@@ -143,6 +150,7 @@ export function refreshConfig(cwd: string, force = false): string[] {
 	// Keep web.env in sync with config force-reload (same as pi-fgt fortigate.env)
 	loadEnvFiles(cwd, force);
 	config = loadConfig(cwd);
+	setPrivateHostAllowlist(config.allowPrivateHosts);
 	configCacheTime = now;
 	configCacheCwd = cwd;
 

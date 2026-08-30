@@ -15,7 +15,7 @@
     <circle cx="72" cy="326" r="6" fill="#68e0a1"/>
     <text x="92" y="334" fill="#dce5ed" font-size="20">local extraction + ranked excerpts</text>
     <circle cx="72" cy="370" r="6" fill="#f3c96b"/>
-    <text x="92" y="378" fill="#dce5ed" font-size="20">visible browser, optional Herdr pane</text>
+    <text x="92" y="378" fill="#dce5ed" font-size="20">external or headless cowork browser</text>
   </g>
 
   <g transform="translate(650 48)" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">

@@ -1,7 +1,7 @@
 /** Fast HTTP fetch via undici + SSRF guard. */
 
 import { fetch } from "undici";
-import { validateUrl, timeoutSignal } from "../utils.js";
+import { fetchWithSafeRedirects, hopHeaders, timeoutSignal } from "../utils.js";
 import { fetchWithMetaRefresh } from "./hints.js";
 
 export interface FetchResult {
@@ -143,27 +143,25 @@ async function fetchUrlOnce(
 	/** Original request URL preserved across meta-refresh hops. */
 	originalUrl: string,
 ): Promise<FetchResult> {
-	const ssrf = validateUrl(url);
-	if (ssrf) throw new Error(ssrf);
-
 	const maxBytes = resolveMaxBytes(options.maxBytes);
 	const signal = timeoutSignal(options.signal, options.timeoutMs);
 
-	const response = await fetch(url, {
-		method: "GET",
-		headers: {
-			"user-agent": DEFAULT_UA,
-			accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-			"accept-language": "en-US,en;q=0.9",
-			...options.headers,
-		},
-		redirect: "follow",
-		signal,
-	});
-
-	const finalUrl = response.url || url;
-	const finalSsrf = validateUrl(finalUrl);
-	if (finalSsrf) throw new Error(finalSsrf);
+	const { response, finalUrl } = await fetchWithSafeRedirects(url, (current, { crossOrigin }) =>
+		fetch(current, {
+			method: "GET",
+			headers: hopHeaders(
+				{
+					"user-agent": DEFAULT_UA,
+					accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+					"accept-language": "en-US,en;q=0.9",
+					...options.headers,
+				},
+				crossOrigin,
+			),
+			redirect: "manual",
+			signal,
+		}),
+	);
 
 	const contentType = response.headers.get("content-type") ?? "text/html";
 	const { text, bytes, truncated } = await readBodyCapped(response, maxBytes);

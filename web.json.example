@@ -3,6 +3,7 @@
   "compact": false,
   "showStatus": true,
   "numResults": 10,
+  "allowPrivateHosts": [],
 
   "read": {
     "defaultMode": "auto",
@@ -25,17 +26,7 @@
   "cowork": {
     "userDataDir": "~/.cloakbrowser/cowork-profile",
     "downloadDir": "~/Downloads",
-    "herdr": {
-      "enabled": false,
-      "direction": "right",
-      "focusOnOpen": true,
-      "browserZoom": 0.75,
-      "showDiagnostics": false,
-      "captureScale": 1,
-      "screencastEveryNthFrame": 1,
-      "fallbackToWindow": true,
-      "cdpPort": 0
-    }
+    "headless": false
   },
 
   "backends": {

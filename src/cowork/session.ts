@@ -1,51 +1,65 @@
-/** Persistent headed CloakBrowser session for web_cowork. */
+/** Persistent headed or headless CloakBrowser session for web_cowork. */
 
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { BrowserContext, Page } from "playwright-core";
 
+import { installBrowserUrlGuard } from "../browser-guard.js";
 import { validateUrl, abortable, throwIfAborted } from "../utils.js";
 import {
 	cloakDownloadLaunchOptions,
 	ensureChromeDownloadPrefs,
 	resolveDownloadDir,
 } from "../read/downloads.js";
+import { installDevtoolsBuffers, resetDevtools } from "./devtools.js";
 import { clearCoworkRefs, resetCoworkRefs } from "./refs.js";
-import type { ResolvedHerdrConfig } from "./herdr/config.js";
-import { viewLogPath } from "./herdr/config.js";
-import {
-	closeHerdrBrowserPane,
-	freePort,
-	openHerdrBrowserPane,
-	paneExists,
-	waitForCdp,
-} from "./herdr/pane.js";
 
 export const DEFAULT_COWORK_PROFILE = join(homedir(), ".cloakbrowser", "cowork-profile");
 const DEFAULT_NAV_TIMEOUT_MS = 60_000;
+
+export interface CoworkPageInfo {
+	index: number;
+	active: boolean;
+	url: string;
+	title: string;
+}
 
 export interface CoworkSessionStatus {
 	open: boolean;
 	url?: string;
 	title?: string;
 	userDataDir?: string;
-	/** Herdr pane id when the browser renders in a pane. */
-	herdrPaneId?: string;
-	herdrFallbackReason?: string;
+	headless?: boolean;
+	pageIndex?: number;
+	pageCount?: number;
 }
 
-interface SessionState {
+export interface CoworkSession {
 	context: BrowserContext;
 	page: Page;
 	userDataDir: string;
-	/** Set when the browser is rendered inside a Herdr pane. */
-	herdr?: { paneId: string; cdpEndpoint: string };
-	/** Why the Herdr pane was not used, when it was requested. */
-	herdrFallbackReason?: string;
+	headless: boolean;
+	takeBlockedUrlError: () => string | null;
 }
 
-let session: SessionState | undefined;
+let session: CoworkSession | undefined;
+
+/** Reuse a live session when the profile matches; ignore headless. */
+export function shouldKeepCoworkSession(
+	current: { userDataDir: string } | undefined,
+	userDataDir: string,
+): boolean {
+	return Boolean(current && current.userDataDir === userDataDir);
+}
+
+/** wait is headed-only: no desktop window to finish in. */
+export function coworkWaitError(status: { open?: boolean; headless?: boolean }): string | null {
+	if (status.open && status.headless) {
+		return "action=wait needs a visible cowork window. Close and reopen without headless, or use snapshot/evaluate.";
+	}
+	return null;
+}
 
 function expandHome(path: string): string {
 	if (path.startsWith("~/") || path === "~") {
@@ -69,7 +83,6 @@ function isPageAlive(page: Page): boolean {
 
 async function isContextAlive(context: BrowserContext): Promise<boolean> {
 	try {
-		// Touch pages(); throws if browser already closed.
 		void context.pages();
 		return true;
 	} catch {
@@ -82,66 +95,91 @@ async function clearSession(): Promise<void> {
 	const current = session;
 	session = undefined;
 	if (!current) return;
-	if (current.herdr) {
-		await closeHerdrBrowserPane(current.herdr.paneId).catch(() => {});
-	}
+	await resetDevtools();
 	await current.context.close().catch(() => {});
+}
+
+function recoverActivePage(current: CoworkSession): boolean {
+	if (isPageAlive(current.page)) return true;
+	const fallback = current.context.pages().find(isPageAlive);
+	if (!fallback) return false;
+	current.page = fallback;
+	installDevtoolsBuffers(fallback);
+	clearCoworkRefs();
+	return true;
 }
 
 /** True when a live cowork session exists. */
 export function isCoworkSessionOpen(): boolean {
-	return Boolean(session && isPageAlive(session.page));
+	return Boolean(session && recoverActivePage(session));
+}
+
+export async function listCoworkPages(): Promise<CoworkPageInfo[]> {
+	const current = await requireCoworkSession();
+	const pages = current.context.pages().filter(isPageAlive);
+	return Promise.all(
+		pages.map(async (page, index) => ({
+			index,
+			active: page === current.page,
+			url: page.url(),
+			title: await page.title().catch(() => ""),
+		})),
+	);
+}
+
+export async function selectCoworkPage(index: number): Promise<CoworkPageInfo> {
+	const current = await requireCoworkSession();
+	const pages = current.context.pages().filter(isPageAlive);
+	if (!Number.isInteger(index) || index < 0 || index >= pages.length) {
+		throw new Error(`pageIndex must be between 0 and ${Math.max(0, pages.length - 1)}`);
+	}
+	current.page = pages[index]!;
+	installDevtoolsBuffers(current.page);
+	clearCoworkRefs();
+	return {
+		index,
+		active: true,
+		url: current.page.url(),
+		title: await current.page.title().catch(() => ""),
+	};
 }
 
 export async function getCoworkStatus(): Promise<CoworkSessionStatus> {
-	if (!session) {
-		return { open: false };
-	}
-	if (
-		!(await isContextAlive(session.context)) ||
-		!isPageAlive(session.page) ||
-		(session.herdr && !(await paneExists(session.herdr.paneId)))
-	) {
+	if (!session) return { open: false };
+	if (!(await isContextAlive(session.context)) || !recoverActivePage(session)) {
 		await clearSession();
 		return { open: false };
 	}
-	let url: string | undefined;
-	let title: string | undefined;
 	try {
-		url = session.page.url();
-		title = await session.page.title();
+		const pages = session.context.pages().filter(isPageAlive);
+		return {
+			open: true,
+			url: session.page.url(),
+			title: await session.page.title(),
+			userDataDir: session.userDataDir,
+			headless: session.headless,
+			pageIndex: pages.indexOf(session.page),
+			pageCount: pages.length,
+		};
 	} catch {
 		await clearSession();
 		return { open: false };
 	}
-	return {
-		open: true,
-		url,
-		title,
-		userDataDir: session.userDataDir,
-		herdrPaneId: session.herdr?.paneId,
-		herdrFallbackReason: session.herdrFallbackReason,
-	};
 }
 
 export async function ensureCoworkSession(options: {
 	userDataDir?: string;
 	downloadDir?: string;
-	herdr?: ResolvedHerdrConfig;
-	/** First URL to show, used for a fresh tab in the pane view. */
-	initialUrl?: string;
-	/** Progress notes for the tool result (pane opened, fell back, …). */
-	onNote?: (note: string) => void;
-}): Promise<SessionState> {
+	headless?: boolean;
+}): Promise<CoworkSession> {
 	const userDataDir = resolveUserDataDir(options.userDataDir);
 	const downloadDir = resolveDownloadDir(options.downloadDir);
-	const wantHerdr = options.herdr?.enabled === true;
+	const headless = options.headless === true;
 
 	if (session) {
-		const alive = (await isContextAlive(session.context)) && isPageAlive(session.page);
-		const modeMatches = wantHerdr === Boolean(session.herdr);
-		const paneAlive = !session.herdr || (await paneExists(session.herdr.paneId));
-		if (alive && modeMatches && paneAlive && session.userDataDir === userDataDir) {
+		const alive = (await isContextAlive(session.context)) && recoverActivePage(session);
+		// headless is create-time only — a live window must not die because open omitted/flipped the flag
+		if (alive && shouldKeepCoworkSession(session, userDataDir)) {
 			return session;
 		}
 		await clearSession();
@@ -150,74 +188,27 @@ export async function ensureCoworkSession(options: {
 	mkdirSync(userDataDir, { recursive: true });
 	ensureChromeDownloadPrefs(userDataDir, downloadDir);
 	const downloadOpts = cloakDownloadLaunchOptions(downloadDir);
-
-	// A Herdr pane renders frames itself, so Chromium runs headless there.
-	const cdpPort = wantHerdr
-		? options.herdr!.cdpPort || (await freePort())
-		: 0;
-
 	const cloak = await import("cloakbrowser");
-	// launchPersistentContext takes launch + context options flat.
 	const context = await cloak.launchPersistentContext({
 		userDataDir,
-		headless: wantHerdr,
-		...downloadOpts.launchOptions,
-		...downloadOpts.contextOptions,
-		...(wantHerdr ? { args: [`--remote-debugging-port=${cdpPort}`] } : {}),
+		headless,
+		launchOptions: downloadOpts.launchOptions,
+		contextOptions: { ...downloadOpts.contextOptions, serviceWorkers: "block" },
 	});
+	const takeBlockedUrlError = await installBrowserUrlGuard(context, true);
+	context.on("page", installDevtoolsBuffers);
 
-	const existing = context.pages();
-	const page = existing[0] ?? (await context.newPage());
+	const page = context.pages()[0] ?? (await context.newPage());
+	for (const openPage of context.pages()) installDevtoolsBuffers(openPage);
 
-	session = { context, page, userDataDir };
-
-	if (wantHerdr) {
-		const cfg = options.herdr!;
-		try {
-			const cdpEndpoint = await waitForCdp(cdpPort);
-			const pane = await openHerdrBrowserPane({
-				cfg,
-				cdpEndpoint,
-				initialUrl: options.initialUrl,
-				logPath: viewLogPath(),
-			});
-			session.herdr = { paneId: pane.paneId, cdpEndpoint };
-			options.onNote?.(`Herdr browser pane ${pane.paneId} (CDP ${cdpEndpoint})`);
-		} catch (err) {
-			const reason = err instanceof Error ? err.message : String(err);
-			if (!cfg.fallbackToWindow) {
-				await clearSession();
-				throw new Error(`Herdr browser pane failed to open:\n${reason}`);
-			}
-			// Headless Chromium with no pane would be invisible: relaunch headed.
-			session.herdrFallbackReason = reason;
-			options.onNote?.(`Herdr pane unavailable, using a desktop window instead:\n${reason}`);
-			await context.close().catch(() => {});
-			const headed = await cloak.launchPersistentContext({
-				userDataDir,
-				headless: false,
-				...downloadOpts.launchOptions,
-				...downloadOpts.contextOptions,
-			});
-			const headedPage = headed.pages()[0] ?? (await headed.newPage());
-			session = {
-				context: headed,
-				page: headedPage,
-				userDataDir,
-				herdrFallbackReason: reason,
-			};
-		}
-	}
-
+	session = { context, page, userDataDir, headless, takeBlockedUrlError };
 	return session;
 }
 
-export async function requireCoworkSession(): Promise<SessionState> {
-	if (!session || !(await isContextAlive(session.context)) || !isPageAlive(session.page)) {
+export async function requireCoworkSession(): Promise<CoworkSession> {
+	if (!session || !(await isContextAlive(session.context)) || !recoverActivePage(session)) {
 		await clearSession();
-		throw new Error(
-			"No open web_cowork session. Call action=open with a url first.",
-		);
+		throw new Error("No open web_cowork session. Call action=open with a url first.");
 	}
 	return session;
 }
@@ -234,6 +225,9 @@ export async function navigateCoworkPage(
 	throwIfAborted(signal);
 	clearCoworkRefs();
 
+	const takeBlockedUrlError =
+		session?.page === page ? session.takeBlockedUrlError : () => null;
+	takeBlockedUrlError();
 	let response: { status: () => number } | null = null;
 	try {
 		response = await abortable(
@@ -242,23 +236,23 @@ export async function navigateCoworkPage(
 		);
 	} catch (err) {
 		throwIfAborted(signal);
+		const blocked = takeBlockedUrlError();
+		if (blocked) throw new Error(blocked);
 		response = await abortable(
-			page.goto(url, {
-				waitUntil: "domcontentloaded",
-				timeout: timeoutMs,
-			}),
+			page.goto(url, { waitUntil: "domcontentloaded", timeout: timeoutMs }),
 			signal,
 		);
 	}
 
+	const blocked = takeBlockedUrlError();
+	if (blocked) throw new Error(blocked);
 	const finalUrl = page.url();
 	const finalSsrf = validateUrl(finalUrl, true);
 	if (finalSsrf) throw new Error(finalSsrf);
 
-	const title = await abortable(page.title().catch(() => ""), signal);
 	return {
 		url: finalUrl,
-		title,
+		title: await abortable(page.title().catch(() => ""), signal),
 		status: response?.status() ?? 200,
 	};
 }

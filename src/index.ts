@@ -1,6 +1,6 @@
 /**
  * pi-web-complete — web_search (random multi-backend) + local web_read (CloakBrowser)
- * + web_cowork (shared-control visible session).
+ * + web_cowork (shared-control headed or headless session).
  *
  * Config: ~/.pi/agent/web.json + .pi/web.json (project wins; legacy search.json still read)
  * Secrets:  ~/.pi/agent/web.env  + .pi/web.env  via apiKeyEnv (process.env wins; legacy apiKey ok)

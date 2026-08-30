@@ -4,7 +4,7 @@
 
 # pi-web-complete
 
-Give [Pi](https://github.com/badlogic/pi-mono) one extension for web discovery, clean local extraction, visible browser interaction, and version-current framework docs.
+Give [Pi](https://github.com/badlogic/pi-mono) one extension for web discovery, clean local extraction, browser interaction and debugging, and version-current framework docs.
 
 ```bash
 pi install npm:@itc-steve/pi-web-complete
@@ -16,7 +16,7 @@ pi install npm:@itc-steve/pi-web-complete
 | --- | --- | --- |
 | **`web_search`** | Current facts and discovery | Brave, Serper, Tavily, Exa, and Linkup with shuffled fallback |
 | **`web_read`** | Reading a URL | Local extraction with query-ranked excerpts by default; `web_fetch` alias included |
-| **`web_cowork`** | Login, CAPTCHA, and multi-step pages | Visible CloakBrowser session shared by user and agent, optionally inside Herdr |
+| **`web_cowork`** | Browser interaction and debugging | External-window or headless CloakBrowser with shared control, DevTools inspection, and raw CDP |
 | **`context7`** | Library and framework APIs | Version-current documentation, registered only when configured |
 
 `web_search` finds the page. `web_read` turns it into focused context. `web_cowork` handles pages that need a person or browser UI. `context7` keeps implementation work grounded in current docs.
@@ -51,6 +51,7 @@ chmod 600 ~/.pi/agent/web.env
 ```json
 {
   "defaultBackend": "auto",
+  "allowPrivateHosts": [],
   "backends": {
     "brave":  { "enabled": true, "apiKeyEnv": "BRAVE_API_KEY" },
     "serper": { "enabled": true, "apiKeyEnv": "SERPER_API_KEY" },
@@ -110,7 +111,13 @@ web_read({ url, query: "HTTP caching Cache-Control" })
 web_read({ url, mode: "browser", saveDir: "~/vault/http-caching" })
 ```
 
-URLs are restricted to HTTP(S). Requests to localhost, private IP ranges, and common internal or metadata hostnames are refused. This validation is hostname-level and does not resolve DNS.
+URLs are restricted to HTTP(S). Requests to localhost, private IP ranges (including IPv4-mapped IPv6), and common internal or metadata hostnames are refused by default. This check is hostname-level and does not resolve DNS (`127.0.0.1.nip.io` is not treated as loopback). To test a trusted local app, explicitly allow its exact hostname (not a URL or wildcard) in global `~/.pi/agent/web.json`:
+
+```json
+{ "allowPrivateHosts": ["localhost", "127.0.0.1"] }
+```
+
+The allowlist applies to initial URLs and redirects in both `web_read` and `web_cowork`. Project config cannot relax it. Only allow hosts you trust because pages can access services on every port permitted by the URL guard.
 
 ## Search with fallback
 
@@ -130,9 +137,9 @@ Key resolution order for every `apiKeyEnv`:
 
 Legacy JSON paths remain supported when the new paths are absent: `~/.pi/agent/extensions/search.json` and `.pi/search.json`.
 
-## Work together in a visible browser
+## Work together in an external or headless browser
 
-`web_cowork` keeps one headed CloakBrowser session open so the agent and user can share control. Use it for authentication, CAPTCHA, and stateful browser workflows; use `web_read` for one-shot extraction.
+`web_cowork` keeps one persistent CloakBrowser session open. Default mode is an external desktop window shared by agent and user; set `headless` for automation. Headless is create-time only: a live session is reused even if a later `open` passes a different flag. Close first to switch. `wait` needs a visible window. Use `web_read` for one-shot extraction.
 
 ```text
 web_cowork({ action: "open", url: "https://example.com/login" })
@@ -156,72 +163,15 @@ Persist sessions and choose a download directory with:
 {
   "cowork": {
     "userDataDir": "~/.cloakbrowser/cowork-profile",
-    "downloadDir": "~/Downloads"
+    "downloadDir": "~/Downloads",
+    "headless": false
   }
 }
 ```
 
 Downloads default to `~/Downloads` and apply to cowork sessions and browser-rendered reads.
 
-<details>
-<summary><strong>Run CloakBrowser inside a Herdr pane</strong></summary>
-
-Enable the opt-in [Herdr](https://herdr.dev) integration:
-
-```json
-{
-  "cowork": {
-    "herdr": { "enabled": true, "direction": "right" }
-  }
-}
-```
-
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| `enabled` | `false` | Render inside Herdr instead of a desktop window |
-| `direction` | `"right"` | Pane split direction |
-| `focusOnOpen` | `true` | Focus browser pane when opened |
-| `browserZoom` | `0.75` | Initial page zoom, from `0.5` to `2.5` |
-| `showDiagnostics` | `false` | Show stream and viewport metrics |
-| `captureScale` | `1` | Scale transferred frames from `0.1` to `1` |
-| `screencastEveryNthFrame` | `1` | Use `2` to halve producer frame rate |
-| `fallbackToWindow` | `true` | Open normal window when pane startup fails |
-| `cdpPort` | `0` | Pick a free loopback port automatically |
-
-Requirements:
-
-1. Herdr 0.7.4+ with Pi running in a Herdr pane.
-2. `kitty_graphics = true` under `[experimental]` in `~/.config/herdr/config.toml`.
-3. `herdr server reload-config`, then restart the Herdr client. Clients attached before graphics were enabled can report a 0px cell size and drop every frame.
-4. Ghostty, kitty, WezTerm, or another Kitty-graphics terminal.
-
-When a requirement is missing, cowork reports why and opens a normal window. Set `fallbackToWindow: false` to make setup failure a hard error.
-
-Verify setup:
-
-```bash
-npm run verify:herdr -- https://example.com
-```
-
-Add `--seconds 20` for timed exit or `--check` to validate without opening a pane. View errors go to `/tmp/pi-herdr-view.log`. Use `PI_HERDR_VIEW_RUNNER` to override the view runtime.
-
-Pane controls:
-
-| Input | Action |
-| --- | --- |
-| Click, drag, scroll, type | Forward input to page |
-| `ctrl+l` | Edit URL; `Enter` navigates, `Esc` cancels |
-| `ctrl+r`, `ctrl+t`, `ctrl+q` | Reload, new tab, close view |
-| Toolbar row 1 | Select, close, or create tabs |
-| Toolbar row 2 | Back, forward, reload, zoom, URL |
-
-The view uses `bun` when available, otherwise packaged `tsx`. Pi retains its Playwright handle while a small pane process attaches over loopback CDP, streams backpressured screencast frames, and forwards input. Closing the pane does not kill the browser.
-
-**Security:** Herdr mode exposes unauthenticated Chrome DevTools Protocol on loopback while cowork is open. Use it only on trusted, single-user hosts. User-driven navigation can reach local network services.
-
-The pane view does not implement downloads, context menus, DevTools, IME, text selection, or find-in-page. Frame transport is tuned for local sessions, not remote SSH.
-
-</details>
+Developer actions expose console and network capture, JavaScript evaluation, screenshots, accessibility trees, tab selection, and raw Chrome DevTools Protocol on page or browser targets. CDP uses Pi's existing Playwright connection; no loopback debugging port is opened. Blocked: Fetch interception, Target create/attach/close, and Browser/Page crash/close (case-insensitive). Raw CDP can still read cookies and run `Runtime.evaluate` against the persistent profile.
 
 ## Get current library docs
 
@@ -244,7 +194,7 @@ context7({ library: "/vercel/next.js/v14.3.0", query: "server actions form valid
 | --- | --- |
 | `web_search` | `query`, `numResults`, `backend`, `compact` |
 | `web_read` / `web_fetch` | `url`, `query`, `return`, `mode`, `format`, `onlyMainContent`, `maxChars`, `maxBytes`, `headless`, `savePath`, `saveDir` |
-| `web_cowork` | `action`, `url`, `mode`, `ref`, `role`, `name`, `selector`, `text`, `clear`, `fills`, `clickRef`, `key`, `deltaY`, `query`, `maxChars`, `message`, `timeoutMs` |
+| `web_cowork` | `action`, `url`, `mode`, `ref`, `role`, `name`, `selector`, `text`, `clear`, `fills`, `clickRef`, `key`, `deltaY`, `query`, `maxChars`, `message`, `timeoutMs`, `headless`, `pageIndex`, `expression`, `method`, `cdpParams`/`params`, `target`, `filter`, `fullPage` |
 | `context7` | `library`, `query`, `fast` |
 
 ### Cowork actions
@@ -256,6 +206,10 @@ context7({ library: "/vercel/next.js/v14.3.0", query: "server actions form valid
 | `snapshot` | Read interactive refs, content, or both |
 | `click`, `type`, `press`, `scroll` | Act on the latest ref; role and name are fallbacks |
 | `batch` | Fill 1–10 fields, then optionally click once |
+| `console`, `network` | Drain captured developer events; optional substring filter |
+| `evaluate`, `screenshot`, `a11y` | Inspect page runtime, pixels, or accessibility tree |
+| `pages`, `select` | List tabs or choose active tab by zero-based index |
+| `cdp` | Send raw CDP method and parameters to page or browser target |
 | `status`, `close` | Inspect or end the session |
 
 ## Runtime behavior

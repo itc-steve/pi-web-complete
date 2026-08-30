@@ -1,5 +1,6 @@
 /** Shared utilities for pi-web-complete. */
 
+import { BlockList, isIP } from "node:net";
 import { join } from "node:path";
 
 export const HTTP_TIMEOUT_MS = 30_000;
@@ -92,21 +93,70 @@ export async function abortable<T>(promise: Promise<T>, signal?: AbortSignal): P
 	});
 }
 
-function isPrivateIpv4(parts: number[]): boolean {
-	if (parts.length !== 4 || parts.some((p) => !Number.isInteger(p) || p < 0 || p > 255)) {
-		return false;
+const PRIVATE_NET = new BlockList();
+PRIVATE_NET.addSubnet("0.0.0.0", 8, "ipv4");
+PRIVATE_NET.addSubnet("10.0.0.0", 8, "ipv4");
+PRIVATE_NET.addSubnet("127.0.0.0", 8, "ipv4");
+PRIVATE_NET.addSubnet("169.254.0.0", 16, "ipv4");
+PRIVATE_NET.addSubnet("172.16.0.0", 12, "ipv4");
+PRIVATE_NET.addSubnet("192.168.0.0", 16, "ipv4");
+PRIVATE_NET.addAddress("::1", "ipv6");
+PRIVATE_NET.addAddress("::", "ipv6");
+PRIVATE_NET.addSubnet("fc00::", 7, "ipv6");
+PRIVATE_NET.addSubnet("fe80::", 10, "ipv6");
+
+/** Last 32 bits of NAT64 / IPv4-compatible / dotted mapped form. Mapped hex is handled by BlockList. */
+function ipv4FromV6(ip: string): string | null {
+	const lower = ip.toLowerCase();
+	if (lower.startsWith("::ffff:") && isIP(lower.slice(7)) === 4) return lower.slice(7);
+	const embedded =
+		lower.match(/^64:ff9b::([0-9a-f]{1,4}):([0-9a-f]{1,4})$/) ||
+		(lower !== "::1" && lower !== "::"
+			? lower.match(/^::([0-9a-f]{1,4}):([0-9a-f]{1,4})$/)
+			: null);
+	if (!embedded) return null;
+	const hi = Number.parseInt(embedded[1]!, 16);
+	const lo = Number.parseInt(embedded[2]!, 16);
+	return `${(hi >> 8) & 255}.${hi & 255}.${(lo >> 8) & 255}.${lo & 255}`;
+}
+
+function isPrivateIpLiteral(ip: string): boolean {
+	const kind = isIP(ip);
+	if (kind === 4) return PRIVATE_NET.check(ip, "ipv4");
+	if (kind === 6) {
+		if (PRIVATE_NET.check(ip, "ipv6")) return true;
+		const v4 = ipv4FromV6(ip);
+		return v4 ? PRIVATE_NET.check(v4, "ipv4") : false;
 	}
-	if (parts[0] === 127) return true;
-	if (parts[0] === 10) return true;
-	if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
-	if (parts[0] === 192 && parts[1] === 168) return true;
-	if (parts[0] === 169 && parts[1] === 254) return true;
-	if (parts.every((p) => p === 0)) return true;
 	return false;
 }
 
+let privateHostAllowlist = new Set<string>();
+
+function normalizeHostname(host: string): string | null {
+	let normalized = host.trim().toLowerCase().replace(/\.$/, "");
+	if (!normalized || /[\s/@]/.test(normalized)) return null;
+	if (normalized.startsWith("[") || normalized.endsWith("]")) {
+		if (!(normalized.startsWith("[") && normalized.endsWith("]"))) return null;
+		normalized = normalized.slice(1, -1);
+		if (isIP(normalized) !== 6) return null;
+	}
+	return normalized;
+}
+
+/** Replace exact private hostnames explicitly trusted by the user's config. */
+export function setPrivateHostAllowlist(hosts: unknown): void {
+	privateHostAllowlist = new Set(
+		(Array.isArray(hosts) ? hosts : [])
+			.filter((host): host is string => typeof host === "string")
+			.map(normalizeHostname)
+			.filter((host): host is string => host !== null),
+	);
+}
+
 export function isPrivateHost(host: string): boolean {
-	const lower = host.toLowerCase().replace(/^\[|\]$/g, "");
+	const lower = normalizeHostname(host);
+	if (!lower) return true;
 
 	if (
 		lower === "localhost" ||
@@ -136,23 +186,7 @@ export function isPrivateHost(host: string): boolean {
 		return true;
 	}
 
-	let ip = lower;
-	if (ip.startsWith("::ffff:")) {
-		ip = ip.slice(7);
-	}
-
-	if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) {
-		return isPrivateIpv4(ip.split(".").map(Number));
-	}
-
-	// IPv6 ULA fc00::/7 and link-local fe80::/10
-	if (ip.includes(":")) {
-		if (ip === "::1") return true;
-		if (ip.startsWith("fc") || ip.startsWith("fd")) return true;
-		if (/^fe[89ab]/i.test(ip)) return true;
-	}
-
-	return false;
+	return isPrivateIpLiteral(lower);
 }
 
 /**
@@ -169,8 +203,11 @@ export function validateUrl(url: string, allowFile = false): string | null {
 			return `SSRF blocked: only http/https allowed, got ${parsed.protocol}`;
 		}
 
-		if (isPrivateHost(parsed.hostname)) {
-			return `SSRF blocked: private host ${parsed.hostname}`;
+		if (
+			isPrivateHost(parsed.hostname) &&
+			!privateHostAllowlist.has(normalizeHostname(parsed.hostname) ?? "")
+		) {
+			return `SSRF blocked: private host ${parsed.hostname}; add it to allowPrivateHosts in web.json to permit it`;
 		}
 
 		if (parsed.username || parsed.password) {
@@ -185,6 +222,62 @@ export function validateUrl(url: string, allowFile = false): string | null {
 		return null;
 	} catch {
 		return `Invalid URL: ${url}`;
+	}
+}
+
+interface ManualRedirectResponse {
+	status: number;
+	headers: { get(name: string): string | null };
+	body?: { cancel?: () => Promise<void> } | null;
+}
+
+const HOP_SENSITIVE = /^(authorization|cookie|proxy-authorization)$/i;
+
+function originOf(url: string): string | null {
+	try {
+		return new URL(url).origin;
+	} catch {
+		return null;
+	}
+}
+
+/** Drop hop-sensitive headers when the next URL is a different origin (Fetch spec). */
+export function hopHeaders(
+	headers: Record<string, string>,
+	crossOrigin: boolean,
+): Record<string, string> {
+	if (!crossOrigin) return headers;
+	return Object.fromEntries(
+		Object.entries(headers).filter(([name]) => !HOP_SENSITIVE.test(name)),
+	);
+}
+
+/** Follow GET redirects only after validating each target, before network access. */
+export async function fetchWithSafeRedirects<T extends ManualRedirectResponse>(
+	url: string,
+	fetchOnce: (url: string, hop: { crossOrigin: boolean }) => Promise<T>,
+	maxRedirects = 5,
+): Promise<{ response: T; finalUrl: string }> {
+	let current = url;
+	let previous = url;
+	for (let redirects = 0; ; redirects++) {
+		const ssrf = validateUrl(current);
+		if (ssrf) throw new Error(ssrf);
+
+		const crossOrigin = originOf(previous) !== originOf(current);
+		const response = await fetchOnce(current, { crossOrigin });
+		const location = [301, 302, 303, 307, 308].includes(response.status)
+			? response.headers.get("location")
+			: null;
+		if (!location) return { response, finalUrl: current };
+		await response.body?.cancel?.().catch(() => {});
+		if (redirects >= maxRedirects) throw new Error(`Too many redirects (>${maxRedirects})`);
+		try {
+			previous = current;
+			current = new URL(location, current).href;
+		} catch {
+			throw new Error(`Invalid redirect URL: ${location}`);
+		}
 	}
 }
 
