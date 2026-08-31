@@ -2,6 +2,7 @@
 
 import { fetch } from "undici";
 import { fetchWithSafeRedirects, hopHeaders, timeoutSignal } from "../utils.js";
+import { challengeFromHeaders } from "./block.js";
 import { fetchWithMetaRefresh } from "./hints.js";
 
 export interface FetchResult {
@@ -12,6 +13,7 @@ export interface FetchResult {
 	html: string;
 	bytes: number;
 	truncated?: boolean;
+	challengeHeader?: boolean;
 }
 
 /** Real browser UA — community sites often serve different shells to bot UAs. */
@@ -174,6 +176,7 @@ async function fetchUrlOnce(
 		html: text,
 		bytes,
 		truncated,
+		challengeHeader: challengeFromHeaders(response.headers),
 	};
 }
 

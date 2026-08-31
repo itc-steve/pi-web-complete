@@ -92,7 +92,7 @@ context7({ library: "next.js", query: "app router middleware auth" })
   <img src="./assets/readme/read-pipeline.svg" width="100%" alt="web_read escalates from fast HTTP through fingerprinting and Readability to CloakBrowser only as needed, then returns ranked excerpts">
 </p>
 
-`web_read` acquires the full page locally, then returns only the most relevant chunks for the query. Automatic mode escalates through fast HTTP, TLS-fingerprint fetch, alternate links, Readability, and CloakBrowser only when earlier paths are blocked or too sparse. It also follows short meta-refresh redirects up to five hops.
+`web_read` acquires the full page locally, then returns only the most relevant chunks for the query. Automatic mode escalates through fast HTTP, TLS-fingerprint fetch, alternate links, Readability, and CloakBrowser only when earlier paths are blocked or too sparse. A confirmed block (401/403/429/503 or `cf-mitigated`) lifts a per-host floor for the rest of the session so later reads of that host skip the failed tier. Residual challenge pages are reported as blocked, not returned as content. It also follows short meta-refresh redirects up to five hops.
 
 ```text
 web_read({ url, query: "HTTP caching Cache-Control" })

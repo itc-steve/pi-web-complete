@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.1.0 - 2026-08-31
+
+### Changed
+
+- Auto `web_read` keeps a per-host climb floor for the session after a confirmed block (status or `cf-mitigated`), so later reads of that host skip HTTP.
+- Residual challenge pages after the top tier are omitted; the tool returns a blocked notice instead of challenge HTML.
+- Session start clears host floors so a new Pi session starts from the fast HTTP tier.
+
 ## 3.0.0 - 2026-08-30
 
 ### Added

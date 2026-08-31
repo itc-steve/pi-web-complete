@@ -9,6 +9,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { refreshConfig } from "./config.js";
+import { clearHostFloors } from "./read/block.js";
 import { clearCooldowns, installCloakLogFilter } from "./utils.js";
 import { registerWebSearch } from "./search/web-search.js";
 import { registerWebRead } from "./read/web-read.js";
@@ -47,6 +48,7 @@ export default function (pi: ExtensionAPI): void {
 
 	pi.on("session_start", (_event, ctx) => {
 		clearCooldowns();
+		clearHostFloors();
 		refreshConfig(ctx.cwd, true);
 		// Footer stays empty until a service is actually used this session.
 		resetSessionStatus(ctx.ui);

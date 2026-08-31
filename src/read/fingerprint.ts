@@ -2,6 +2,7 @@
 
 import { Impit } from "impit";
 import { fetchWithSafeRedirects, timeoutSignal } from "../utils.js";
+import { challengeFromHeaders } from "./block.js";
 import { readBodyCapped, resolveMaxBytes, type FetchResult } from "./fetch.js";
 import { fetchWithMetaRefresh } from "./hints.js";
 
@@ -41,6 +42,7 @@ async function fingerprintFetchOnce(
 		html: text,
 		bytes,
 		truncated,
+		challengeHeader: challengeFromHeaders(response.headers),
 	};
 }
 

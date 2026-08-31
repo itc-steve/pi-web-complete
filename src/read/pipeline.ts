@@ -13,6 +13,16 @@ import {
 	type PageMeta,
 } from "./hints.js";
 import { tryReadGitHubIssue } from "./github.js";
+import {
+	detectBlock,
+	getHostFloor,
+	liftHostFloor,
+	shouldRefuseResidual,
+	blockedNotice,
+	type BlockVerdict,
+	type LoadTier,
+} from "./block.js";
+import type { BrowserRenderResult } from "./browser.js";
 
 export interface ReadOptions {
 	mode?: ReadMode;
@@ -54,19 +64,11 @@ type MatOpts = Required<
 
 interface PageSignals {
 	blockedLikely: boolean;
+	highBlock: boolean;
 	spaLikely: boolean;
 	sparseDom: boolean;
 	textLength: number;
 }
-
-const BLOCK_PATTERNS = [
-	/captcha/iu,
-	/cloudflare/iu,
-	/access denied/iu,
-	/temporarily blocked/iu,
-	/unusual traffic/iu,
-	/please verify you are a human/iu,
-];
 
 const SPA_PATTERNS = [
 	/id=["'](?:root|app|__next)["']/iu,
@@ -79,10 +81,13 @@ const SPA_PATTERNS = [
 /** Cap alternate follow-ups so a page full of link tags can't fan out. */
 const MAX_ALTERNATE_TRIES = 3;
 
-function analyzeSignals(status: number, html: string, text: string): PageSignals {
-	const statusBlocked = status === 401 || status === 403 || status === 429 || status === 503;
-	const blockedLikely =
-		statusBlocked || BLOCK_PATTERNS.some((p) => p.test(html) || p.test(text));
+function analyzeSignals(
+	status: number,
+	html: string,
+	text: string,
+	challengeHeader = false,
+): PageSignals {
+	const verdict = detectBlock(status, html, text, challengeHeader);
 	const spaLikely = SPA_PATTERNS.some((p) => p.test(html));
 	const htmlLength = html.length;
 	const textLength = text.length;
@@ -91,7 +96,73 @@ function analyzeSignals(status: number, html: string, text: string): PageSignals
 	// megabytes of chrome around a solid article and must not look "sparse".
 	const sparseDom =
 		textLength < 200 || (textLength < 1200 && textDensity < 0.03);
-	return { blockedLikely, spaLikely, sparseDom, textLength };
+	return {
+		blockedLikely: verdict.confidence !== "none",
+		highBlock: verdict.confidence === "high",
+		spaLikely,
+		sparseDom,
+		textLength,
+	};
+}
+
+function refuseResult(
+	url: string,
+	finalUrl: string,
+	status: number,
+	verdict: BlockVerdict,
+	format: ReadFormat,
+): ReadResult {
+	const content = blockedNotice(finalUrl || url, status, verdict.reason ?? "blocked");
+	return {
+		url,
+		finalUrl: finalUrl || url,
+		title: "Blocked",
+		mode: "blocked",
+		format,
+		content,
+		status,
+		chars: content.length,
+	};
+}
+
+function pageFromBrowser(
+	url: string,
+	rendered: BrowserRenderResult,
+	mat: MatOpts,
+	format: ReadFormat,
+	onlyMainContent: boolean,
+	removeImages: boolean,
+	climbFromHigh: boolean,
+): ReadResult {
+	const rFast = extractFast(rendered.html);
+	const { content, title } = materialize(
+		rendered.html,
+		rFast.text,
+		format,
+		removeImages,
+		onlyMainContent,
+		rFast.title,
+	);
+	const truncated = truncate(content, mat.maxChars);
+	const verdict = detectBlock(rendered.status, rendered.html, rFast.text);
+	if (climbFromHigh || verdict.confidence === "high") liftHostFloor(url, "browser");
+	if (shouldRefuseResidual(verdict, truncated.length)) {
+		return refuseResult(url, rendered.finalUrl, rendered.status, verdict, format);
+	}
+	return withMeta(
+		{
+			url,
+			finalUrl: rendered.finalUrl,
+			title,
+			mode: "browser",
+			format,
+			content: truncated,
+			status: rendered.status,
+			chars: truncated.length,
+		},
+		rendered.html,
+		rendered.finalUrl || url,
+	);
 }
 
 function materialize(
@@ -399,52 +470,54 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 		if (gh) return gh;
 	}
 
-	if (mode === "browser") {
-		const rendered = await renderWithCloakBrowser(url, browserOpts);
-		const fast = extractFast(rendered.html);
-		const { content, title } = materialize(
-			rendered.html,
-			fast.text,
-			format,
-			removeImages,
-			onlyMainContent,
-			fast.title,
-		);
-		let truncated = truncate(content, options.maxChars);
+	const autoFloor: LoadTier = mode === "auto" ? getHostFloor(url) : "fast";
 
-		// Community sites often redirect CloakBrowser to SSO/signup while plain
-		// HTTP still serves the article. Prefer the richer extract.
-		if (truncated.length < 1500 || /log\s*in|sign\s*up|sso|exclusive benefits/i.test(truncated)) {
+	if (mode === "browser" || autoFloor === "browser") {
+		const rendered = await renderWithCloakBrowser(url, browserOpts);
+		const preview = pageFromBrowser(
+			url,
+			rendered,
+			matOpts,
+			format,
+			onlyMainContent,
+			removeImages,
+			autoFloor === "browser",
+		);
+
+		// Forced browser: community sites often redirect CloakBrowser to SSO
+		// while plain HTTP still serves the article. Skip when this host already
+		// proved HTTP is blocked (host-sticky floor).
+		if (
+			mode === "browser" &&
+			preview.mode !== "blocked" &&
+			(preview.chars < 1500 || /log\s*in|sign\s*up|sso|exclusive benefits/i.test(preview.content))
+		) {
 			try {
 				const http = await fetchUrl(url, { signal, timeoutMs, maxBytes });
-				const httpResult = await maybeFollowAlternates(
-					fromFetch(http, "browser-fallback-fast", matOpts),
+				const httpFast = extractFast(http.html);
+				const httpBlock = detectBlock(
+					http.status,
 					http.html,
-					matOpts,
+					httpFast.text,
+					http.challengeHeader,
 				);
-				if (httpResult.chars > truncated.length * 1.5) {
-					return httpResult;
+				if (httpBlock.confidence !== "high") {
+					const httpResult = await maybeFollowAlternates(
+						fromFetch(http, "browser-fallback-fast", matOpts),
+						http.html,
+						matOpts,
+					);
+					if (httpResult.chars > preview.chars * 1.5) {
+						return httpResult;
+					}
 				}
 			} catch {
 				// keep browser result
 			}
 		}
 
-		const browserResult = withMeta(
-			{
-				url,
-				finalUrl: rendered.finalUrl,
-				title,
-				mode: "browser",
-				format,
-				content: truncated,
-				status: rendered.status,
-				chars: truncated.length,
-			},
-			rendered.html,
-			rendered.finalUrl || url,
-		);
-		return maybeFollowAlternates(browserResult, rendered.html, matOpts);
+		if (preview.mode === "blocked") return preview;
+		return maybeFollowAlternates(preview, rendered.html, matOpts);
 	}
 
 	if (mode === "fingerprint") {
@@ -452,8 +525,13 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 		return maybeFollowAlternates(fromFetch(fetched, "fingerprint", matOpts), fetched.html, matOpts);
 	}
 
-	// fast / readable / auto all start with undici
-	const fastFetch = await fetchUrl(url, { signal, timeoutMs, maxBytes });
+	// fast / readable / auto start with undici, unless auto already knows this host needs fingerprint.
+	const startedAt: LoadTier =
+		mode === "auto" && autoFloor === "fingerprint" ? "fingerprint" : "fast";
+	const fastFetch =
+		startedAt === "fingerprint"
+			? await fingerprintFetch(url, { signal, timeoutMs, maxBytes })
+			: await fetchUrl(url, { signal, timeoutMs, maxBytes });
 
 	// PDF only: skip signal analysis, alternates, and browser. Other non-HTML
 	// (text/plain, JSON, mislabeled HTML) still enters the recovery ladder so
@@ -467,7 +545,12 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 
 	const rawBody = isRawBody(fastFetch.contentType, fastFetch.html);
 	const fast = extractFast(fastFetch.html);
-	const signals = analyzeSignals(fastFetch.status, fastFetch.html, fast.text);
+	const signals = analyzeSignals(
+		fastFetch.status,
+		fastFetch.html,
+		fast.text,
+		fastFetch.challengeHeader,
+	);
 
 	if (mode === "fast") {
 		return maybeFollowAlternates(fromFetch(fastFetch, "fast", matOpts), fastFetch.html, matOpts);
@@ -515,17 +598,21 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 	// === AUTO ===
 	if (signals.blockedLikely) {
 		try {
-			const fp = await fingerprintFetch(url, { signal, timeoutMs, maxBytes });
+			const fp =
+				startedAt === "fingerprint"
+					? fastFetch
+					: await fingerprintFetch(url, { signal, timeoutMs, maxBytes });
 			const fpFast = extractFast(fp.html);
-			const fpSignals = analyzeSignals(fp.status, fp.html, fpFast.text);
+			const fpSignals = analyzeSignals(fp.status, fp.html, fpFast.text, fp.challengeHeader);
 			if (!fpSignals.blockedLikely && !fpSignals.sparseDom) {
+				if (signals.highBlock) liftHostFloor(url, "fingerprint");
 				return maybeFollowAlternates(
 					fromFetch(fp, "fingerprint", matOpts),
 					fp.html,
 					matOpts,
 				);
 			}
-			if (fpSignals.spaLikely || fpSignals.sparseDom) {
+			if (fpSignals.spaLikely || fpSignals.sparseDom || fpSignals.blockedLikely) {
 				// Try alternates on the fingerprint HTML before launching a browser.
 				const fpResult = await maybeFollowAlternates(
 					fromFetch(fp, "fingerprint", matOpts),
@@ -537,38 +624,36 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 				}
 
 				// Raw bodies never benefit from browser; auto must not hard-depend on it.
-				if (rawBody) return fpResult;
+				if (rawBody) {
+					const fpVerdict = detectBlock(fp.status, fp.html, fpFast.text, fp.challengeHeader);
+					if (shouldRefuseResidual(fpVerdict, fpResult.chars)) {
+						return refuseResult(url, fp.finalUrl, fp.status, fpVerdict, format);
+					}
+					return fpResult;
+				}
 
 				try {
 					const rendered = await renderWithCloakBrowser(url, browserOpts);
-					const rFast = extractFast(rendered.html);
-					const { content, title } = materialize(
-						rendered.html,
-						rFast.text,
+					const climbed = pageFromBrowser(
+						url,
+						rendered,
+						matOpts,
 						format,
-						removeImages,
 						onlyMainContent,
-						rFast.title,
+						removeImages,
+						signals.highBlock || fpSignals.highBlock,
 					);
-					const truncated = truncate(content, options.maxChars);
-					return withMeta(
-						{
-							url,
-							finalUrl: rendered.finalUrl,
-							title,
-							mode: "browser",
-							format,
-							content: truncated,
-							status: rendered.status,
-							chars: truncated.length,
-						},
-						rendered.html,
-						rendered.finalUrl || url,
-					);
+					if (climbed.mode === "blocked") return climbed;
+					return climbed;
 				} catch {
+					const fpVerdict = detectBlock(fp.status, fp.html, fpFast.text, fp.challengeHeader);
+					if (shouldRefuseResidual(fpVerdict, fpResult.chars)) {
+						return refuseResult(url, fp.finalUrl, fp.status, fpVerdict, format);
+					}
 					return fpResult;
 				}
 			}
+			if (signals.highBlock && !fpSignals.highBlock) liftHostFloor(url, "fingerprint");
 			return maybeFollowAlternates(fromFetch(fp, "fingerprint", matOpts), fp.html, matOpts);
 		} catch {
 			// fall through to readable/browser on fingerprint failure
@@ -631,30 +716,17 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 
 			try {
 				const rendered = await renderWithCloakBrowser(url, browserOpts);
-				const rFast = extractFast(rendered.html);
-				const { content, title } = materialize(
-					rendered.html,
-					rFast.text,
+				const climbed = pageFromBrowser(
+					url,
+					rendered,
+					matOpts,
 					format,
-					removeImages,
 					onlyMainContent,
-					rFast.title,
+					removeImages,
+					signals.highBlock,
 				);
-				const truncated = truncate(content, options.maxChars);
-				return withMeta(
-					{
-						url,
-						finalUrl: rendered.finalUrl,
-						title,
-						mode: "browser",
-						format,
-						content: truncated,
-						status: rendered.status,
-						chars: truncated.length,
-					},
-					rendered.html,
-					rendered.finalUrl || url,
-				);
+				if (climbed.mode === "blocked") return climbed;
+				return climbed;
 			} catch {
 				// Auto ladder must degrade to the best HTTP result, not throw.
 				return altResult;
