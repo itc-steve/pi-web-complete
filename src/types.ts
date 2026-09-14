@@ -68,7 +68,14 @@ export interface Context7Config {
 	fast?: boolean;
 }
 
+export interface SearchToolConfig {
+	/** web_search active at session start. Default: true. Toggle live with /web search. */
+	enabled?: boolean;
+}
+
 export interface CoworkConfig {
+	/** web_cowork active at session start. Default: true. Toggle live with /web cowork. */
+	enabled?: boolean;
 	/**
 	 * Persistent Chromium profile for web_cowork.
 	 * Default: ~/.cloakbrowser/cowork-profile
@@ -83,6 +90,8 @@ export interface CoworkConfig {
 }
 
 export interface SearchConfig {
+	/** web_search tool toggles. */
+	search?: SearchToolConfig;
 	/** Tool default when `backend` param omitted. `"auto"` = random shuffle. */
 	defaultBackend?: BackendName | "auto";
 	compact?: boolean;

@@ -55,7 +55,13 @@ declare module "@earendil-works/pi-coding-agent" {
 
 	export interface Command {
 		description: string;
-		handler: (args: string[], ctx: ExtensionContext) => Promise<void>;
+		/** Argument auto-completion for `/command ...` (mirrors AutocompleteItem from pi-tui). */
+		getArgumentCompletions?: (
+			argumentPrefix: string,
+		) => Array<{ value: string; label: string }> | null | Promise<
+				Array<{ value: string; label: string }> | null
+			>;
+		handler: (args: string, ctx: ExtensionContext) => Promise<void>;
 	}
 
 	export interface ToolResultEvent {
@@ -97,7 +103,8 @@ declare module "@earendil-works/pi-coding-agent" {
 	export interface ExtensionAPI {
 		registerTool(config: ToolParameter): void;
 		registerCommand(name: string, config: Command): void;
-		getActiveTools?(): string[];
+		getActiveTools(): string[];
+		setActiveTools(toolNames: string[]): void;
 		on(event: "session_start", handler: (event: SessionStartEvent, ctx: ExtensionContext) => void): void;
 		on(event: "session_compact", handler: (event: SessionCompactEvent, ctx: ExtensionContext) => void): void;
 		on(

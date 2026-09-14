@@ -52,6 +52,8 @@ chmod 600 ~/.pi/agent/web.env
 {
   "defaultBackend": "auto",
   "allowPrivateHosts": [],
+  "search": { "enabled": true },
+  "cowork": { "enabled": true },
   "backends": {
     "brave":  { "enabled": true, "apiKeyEnv": "BRAVE_API_KEY" },
     "serper": { "enabled": true, "apiKeyEnv": "SERPER_API_KEY" },
@@ -85,6 +87,28 @@ web_read({ url: "https://example.com/guide", query: "authentication setup" })
 web_cowork({ action: "open", url: "https://example.com/login" })
 context7({ library: "next.js", query: "app router middleware auth" })
 ```
+
+## Toggle web_search / web_cowork per session
+
+Both tools start enabled in every new session. Disable one for the rest of a session with the `/web` command:
+
+```text
+/web                # status: search / cowork / shared browser
+/web search off     # hide web_search until re-enabled
+/web cowork         # flip web_cowork on or off
+/web                # status again
+```
+
+A bare target flips the current state; `on` / `off` set it explicitly. Disabling `web_cowork` hides the tool but leaves any open shared browser session running. Toggles last for the session only; set the per-session default in `web.json`:
+
+```json
+{
+  "search": { "enabled": false },
+  "cowork": { "enabled": false }
+}
+```
+
+Both default to `true` when absent, so a missing config section keeps auto-enable on.
 
 ## Read pages without flooding context
 

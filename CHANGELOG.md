@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.2.0 - 2026-09-14
+
+### Added
+
+- `/web` command toggles `web_search` and `web_cowork` on or off for the current session (`/web [search|cowork] [on|off]`, bare target flips, `/web` reports status).
+- `search.enabled` and `cowork.enabled` in `web.json` set the per-session default for both tools; both default to enabled.
+
 ## 3.1.0 - 2026-08-31
 
 ### Changed

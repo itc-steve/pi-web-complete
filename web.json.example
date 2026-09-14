@@ -5,6 +5,10 @@
   "numResults": 10,
   "allowPrivateHosts": [],
 
+  "search": {
+    "enabled": true
+  },
+
   "read": {
     "defaultMode": "auto",
     "defaultFormat": "markdown",
@@ -24,6 +28,7 @@
   },
 
   "cowork": {
+    "enabled": true,
     "userDataDir": "~/.cloakbrowser/cowork-profile",
     "downloadDir": "~/Downloads",
     "headless": false
