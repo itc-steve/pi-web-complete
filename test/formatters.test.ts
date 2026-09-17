@@ -5,7 +5,7 @@
  */
 
 import assert from "node:assert/strict";
-import { dedupeResults, formatResults, SNIPPET_CAP } from "../src/search/formatters.js";
+import { dedupeResults, formatResults, formatResultsCompact, SNIPPET_CAP } from "../src/search/formatters.js";
 import type { SearchResult } from "../src/types.js";
 
 const mk = (u: string, t = "T"): SearchResult => ({ url: u, title: t });
@@ -109,6 +109,12 @@ assert.strictEqual(SNIPPET_CAP, 500, "SNIPPET_CAP is 500");
 	// The formatted output includes the snippet truncated to 500 + "..."
 	const truncated = "x".repeat(500) + "...";
 	assert.ok(out.includes(truncated), "snippet truncated at 500 chars");
+}
+
+// 14. Compact results keep URLs usable
+{
+	const url = "https://docs.example.com/document/product/7.4.11/administration-guide/123456/rest-api-administrator";
+	assert.ok(formatResultsCompact([mk(url)]).includes(url), "compact result keeps full URL");
 }
 
 console.log("All formatters tests passed.");

@@ -80,8 +80,7 @@ export function formatResultsCompact(
 	if (results.length === 0) return "No results.";
 	const lines = results.map((r, i) => {
 		const title = (r.title || "Untitled").slice(0, 60);
-		const url = r.url.length > 50 ? r.url.slice(0, 47) + "..." : r.url;
-		return `${i + 1}. ${title} — ${url}`;
+		return `${i + 1}. ${title} — ${r.url}`;
 	});
 	return lines.join("\n");
 }
