@@ -12,7 +12,11 @@ import {
 	ensureChromeDownloadPrefs,
 	resolveDownloadDir,
 } from "../read/downloads.js";
-import { installDevtoolsBuffers, resetDevtools } from "./devtools.js";
+import {
+	type CoworkDevice,
+	installDevtoolsBuffers,
+	resetDevtools,
+} from "./devtools.js";
 import { clearCoworkRefs, resetCoworkRefs } from "./refs.js";
 
 export const DEFAULT_COWORK_PROFILE = join(homedir(), ".cloakbrowser", "cowork-profile");
@@ -31,6 +35,7 @@ export interface CoworkSessionStatus {
 	title?: string;
 	userDataDir?: string;
 	headless?: boolean;
+	device?: CoworkDevice;
 	pageIndex?: number;
 	pageCount?: number;
 }
@@ -40,6 +45,7 @@ export interface CoworkSession {
 	page: Page;
 	userDataDir: string;
 	headless: boolean;
+	device: CoworkDevice;
 	takeBlockedUrlError: () => string | null;
 }
 
@@ -158,6 +164,7 @@ export async function getCoworkStatus(): Promise<CoworkSessionStatus> {
 			title: await session.page.title(),
 			userDataDir: session.userDataDir,
 			headless: session.headless,
+			device: session.device,
 			pageIndex: pages.indexOf(session.page),
 			pageCount: pages.length,
 		};
@@ -201,7 +208,14 @@ export async function ensureCoworkSession(options: {
 	const page = context.pages()[0] ?? (await context.newPage());
 	for (const openPage of context.pages()) installDevtoolsBuffers(openPage);
 
-	session = { context, page, userDataDir, headless, takeBlockedUrlError };
+	session = {
+		context,
+		page,
+		userDataDir,
+		headless,
+		device: "desktop",
+		takeBlockedUrlError,
+	};
 	return session;
 }
 

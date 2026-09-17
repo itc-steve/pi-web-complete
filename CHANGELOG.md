@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `web_cowork` `action=emulate` switches Chrome device mode (`device=mobile` / `device=desktop`). Mobile uses Pixel 7 metrics with `mobile:true`, touch, and a mobile UA/client hints — not a window resize. Optional `device` on `open`. Default remains desktop.
+
 ## 3.2.0 - 2026-09-14
 
 ### Added

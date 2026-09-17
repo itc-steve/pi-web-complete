@@ -5,8 +5,10 @@ import assert from "node:assert/strict";
 import type { Page } from "playwright-core";
 
 import {
+	emulateDevice,
 	formatCdpJson,
 	isBlockedCdpMethod,
+	mobileDeviceMetrics,
 	pushBounded,
 	redactHeaders,
 	resetDevtools,
@@ -28,6 +30,9 @@ assert.equal(isBlockedCdpMethod("Browser.crashGpuProcess"), true);
 assert.equal(isBlockedCdpMethod("Runtime.evaluate"), false);
 assert.equal(isBlockedCdpMethod("Network.getResponseBody"), false);
 assert.equal(isBlockedCdpMethod("Network.getAllCookies"), false);
+assert.equal(isBlockedCdpMethod("Emulation.setDeviceMetricsOverride"), false);
+assert.equal(isBlockedCdpMethod("Emulation.setUserAgentOverride"), false);
+assert.equal(isBlockedCdpMethod("Emulation.clearDeviceMetricsOverride"), false);
 
 assert.deepEqual(
 	redactHeaders({ Authorization: "Bearer secret", Cookie: "sid=secret", Accept: "text/html" }),
@@ -80,6 +85,49 @@ eventHandler?.({ method: "Runtime.consoleAPICalled", params: { type: "log" } });
 assert.deepEqual(await takeCdpEvents(page, "page"), [
 	{ method: "Runtime.consoleAPICalled", params: { type: "log" } },
 ]);
+await resetDevtools();
+
+const metrics = mobileDeviceMetrics();
+assert.equal(metrics.mobile, true);
+assert.equal(typeof metrics.width, "number");
+assert.ok((metrics.width as number) > 0 && (metrics.width as number) < 600);
+
+const emulateSent: Array<{ method: string; params?: Record<string, unknown> }> = [];
+const emulateCdp = {
+	on: () => {},
+	once: () => {},
+	send: async (method: string, params?: Record<string, unknown>) => {
+		emulateSent.push({ method, params });
+		return {};
+	},
+	detach: async () => {},
+};
+const emulatePage = {
+	context: () => ({ newCDPSession: async () => emulateCdp }),
+} as unknown as Page;
+
+await emulateDevice(emulatePage, "mobile");
+const mobileMetricsCall = emulateSent.find((entry) => entry.method === "Emulation.setDeviceMetricsOverride");
+assert.equal(mobileMetricsCall?.params?.mobile, true, "mobile:true is the actual Chrome device-mode flag");
+assert.equal(
+	emulateSent.find((entry) => entry.method === "Emulation.setTouchEmulationEnabled")?.params?.enabled,
+	true,
+);
+assert.equal(
+	emulateSent.find((entry) => entry.method === "Emulation.setEmitTouchEventsForMouse")?.params?.enabled,
+	true,
+);
+const mobileUa = emulateSent.find((entry) => entry.method === "Emulation.setUserAgentOverride");
+assert.match(String(mobileUa?.params?.userAgent), /Mobile/);
+assert.equal((mobileUa?.params?.userAgentMetadata as { mobile?: boolean })?.mobile, true);
+
+emulateSent.length = 0;
+await emulateDevice(emulatePage, "desktop");
+assert.ok(emulateSent.some((entry) => entry.method === "Emulation.clearDeviceMetricsOverride"));
+assert.equal(
+	emulateSent.find((entry) => entry.method === "Emulation.setUserAgentOverride")?.params?.userAgent,
+	"",
+);
 await resetDevtools();
 
 console.log("Cowork DevTools checks passed");

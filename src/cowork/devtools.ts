@@ -1,10 +1,11 @@
 /** DevTools capture and raw CDP for the active cowork browser. */
 
-import type {
-	BrowserContext,
-	CDPSession,
-	Page,
-	Request,
+import {
+	type BrowserContext,
+	type CDPSession,
+	devices,
+	type Page,
+	type Request,
 } from "playwright-core";
 
 import { abortable, throwIfAborted } from "../utils.js";
@@ -258,4 +259,87 @@ export async function resetDevtools(): Promise<void> {
 	pageSessions = new WeakMap();
 	browserSessions = new WeakMap();
 	sessionEvents = new WeakMap();
+}
+
+/** Chrome device mode. Default cowork is desktop; mobile is Pixel 7 + `mobile: true`. */
+export type CoworkDevice = "mobile" | "desktop";
+
+const PIXEL7 = devices["Pixel 7"];
+
+export function mobileDeviceMetrics(): Record<string, unknown> {
+	const { width, height } = PIXEL7.viewport;
+	return {
+		mobile: true,
+		width,
+		height,
+		screenWidth: width,
+		screenHeight: height,
+		deviceScaleFactor: PIXEL7.deviceScaleFactor,
+		screenOrientation: { angle: 0, type: "portraitPrimary" },
+	};
+}
+
+/** Same CDP stack Chrome DevTools device mode uses. Does not reload. */
+export async function emulateDevice(
+	page: Page,
+	device: CoworkDevice,
+	signal?: AbortSignal,
+): Promise<void> {
+	if (device === "mobile") {
+		await sendCdpCommand(
+			page,
+			"page",
+			"Emulation.setDeviceMetricsOverride",
+			mobileDeviceMetrics(),
+			signal,
+		);
+		await sendCdpCommand(
+			page,
+			"page",
+			"Emulation.setTouchEmulationEnabled",
+			{ enabled: true },
+			signal,
+		);
+		await sendCdpCommand(
+			page,
+			"page",
+			"Emulation.setEmitTouchEventsForMouse",
+			{ enabled: true, configuration: "mobile" },
+			signal,
+		);
+		await sendCdpCommand(
+			page,
+			"page",
+			"Emulation.setUserAgentOverride",
+			{
+				userAgent: PIXEL7.userAgent,
+				userAgentMetadata: {
+					mobile: true,
+					model: "Pixel 7",
+					architecture: "arm",
+					platform: "Android",
+					platformVersion: "14",
+				},
+			},
+			signal,
+		);
+		return;
+	}
+
+	await sendCdpCommand(page, "page", "Emulation.clearDeviceMetricsOverride", {}, signal);
+	await sendCdpCommand(
+		page,
+		"page",
+		"Emulation.setTouchEmulationEnabled",
+		{ enabled: false },
+		signal,
+	);
+	await sendCdpCommand(
+		page,
+		"page",
+		"Emulation.setEmitTouchEventsForMouse",
+		{ enabled: false },
+		signal,
+	);
+	await sendCdpCommand(page, "page", "Emulation.setUserAgentOverride", { userAgent: "" }, signal);
 }

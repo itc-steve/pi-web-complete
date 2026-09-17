@@ -16,7 +16,7 @@ pi install npm:@itc-steve/pi-web-complete
 | --- | --- | --- |
 | **`web_search`** | Current facts and discovery | Brave, Serper, Tavily, Exa, and Linkup with shuffled fallback |
 | **`web_read`** | Reading a URL | Local extraction with query-ranked excerpts by default; `web_fetch` alias included |
-| **`web_cowork`** | Browser interaction and debugging | External-window or headless CloakBrowser with shared control, DevTools inspection, and raw CDP |
+| **`web_cowork`** | Browser interaction and debugging | External-window or headless CloakBrowser with shared control, DevTools inspection, Chrome device-mode emulation, and raw CDP |
 | **`context7`** | Library and framework APIs | Version-current documentation, registered only when configured |
 
 `web_search` finds the page. `web_read` turns it into focused context. `web_cowork` handles pages that need a person or browser UI. `context7` keeps implementation work grounded in current docs.
@@ -195,7 +195,27 @@ Persist sessions and choose a download directory with:
 
 Downloads default to `~/Downloads` and apply to cowork sessions and browser-rendered reads.
 
-Developer actions expose console and network capture, JavaScript evaluation, screenshots, accessibility trees, tab selection, and raw Chrome DevTools Protocol on page or browser targets. CDP uses Pi's existing Playwright connection; no loopback debugging port is opened. Blocked: Fetch interception, Target create/attach/close, and Browser/Page crash/close (case-insensitive). Raw CDP can still read cookies and run `Runtime.evaluate` against the persistent profile.
+Developer actions expose console and network capture, JavaScript evaluation, screenshots, accessibility trees, tab selection, Chrome device-mode emulation, and raw Chrome DevTools Protocol on page or browser targets. CDP uses Pi's existing Playwright connection; no loopback debugging port is opened. Blocked: Fetch interception, Target create/attach/close, and Browser/Page crash/close (case-insensitive). Raw CDP can still read cookies and run `Runtime.evaluate` against the persistent profile.
+
+### Mobile vs desktop
+
+Cowork defaults to desktop Chrome. Resizing the window is not mobile: desktop Chromium ignores viewport meta, keeps `(hover: hover)` / `(pointer: fine)`, and sends a desktop UA. `action=emulate` is Chrome DevTools device mode:
+
+- `device=mobile` — Pixel 7 metrics with `mobile:true` (viewport meta, overlay scrollbars, text autosizing), touch events, and a mobile UA plus `Sec-CH-UA-Mobile`. Reloads so the server sees the new UA.
+- `device=desktop` — restore. Reloads.
+- Optional `device` on `open` so the first load is already mobile.
+
+Local apps need the host in `allowPrivateHosts`. Then:
+
+```text
+web_cowork({ action: "open", url: "http://127.0.0.1:3000" })
+web_cowork({ action: "screenshot" })
+web_cowork({ action: "emulate", device: "mobile" })
+web_cowork({ action: "screenshot" })
+web_cowork({ action: "emulate", device: "desktop" })
+```
+
+This matches Chrome's device toolbar, not a real phone (GPU, software keyboard, `100vh` URL bar, iOS Safari/WebKit). `status` reports the current `Device`.
 
 ## Get current library docs
 
@@ -218,7 +238,7 @@ context7({ library: "/vercel/next.js/v14.3.0", query: "server actions form valid
 | --- | --- |
 | `web_search` | `query`, `numResults`, `backend`, `compact` |
 | `web_read` / `web_fetch` | `url`, `query`, `return`, `mode`, `format`, `onlyMainContent`, `maxChars`, `maxBytes`, `headless`, `savePath`, `saveDir` |
-| `web_cowork` | `action`, `url`, `mode`, `ref`, `role`, `name`, `selector`, `text`, `clear`, `fills`, `clickRef`, `key`, `deltaY`, `query`, `maxChars`, `message`, `timeoutMs`, `headless`, `pageIndex`, `expression`, `method`, `cdpParams`/`params`, `target`, `filter`, `fullPage` |
+| `web_cowork` | `action`, `url`, `mode`, `ref`, `role`, `name`, `selector`, `text`, `clear`, `fills`, `clickRef`, `key`, `deltaY`, `query`, `maxChars`, `message`, `timeoutMs`, `headless`, `pageIndex`, `expression`, `method`, `cdpParams`/`params`, `target`, `filter`, `fullPage`, `device` |
 | `context7` | `library`, `query`, `fast` |
 
 ### Cowork actions
@@ -226,6 +246,7 @@ context7({ library: "/vercel/next.js/v14.3.0", query: "server actions form valid
 | Action | Purpose |
 | --- | --- |
 | `open`, `navigate` | Open or move the shared browser and return fresh refs |
+| `emulate` | Chrome device mode (`device=mobile` / `device=desktop`). Default desktop. Not a window resize. Optional `device` on `open`. |
 | `wait` | Pause for user input, then return optional note and fresh refs |
 | `snapshot` | Read interactive refs, content, or both |
 | `click`, `type`, `press`, `scroll` | Act on the latest ref; role and name are fallbacks |
