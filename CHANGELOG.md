@@ -1,10 +1,14 @@
 # Changelog
 
-## Unreleased
+## 3.2.1 - 2026-09-17
 
 ### Added
 
 - `web_cowork` `action=emulate` switches Chrome device mode (`device=mobile` / `device=desktop`). Mobile uses Pixel 7 metrics with `mobile:true`, touch, and a mobile UA/client hints — not a window resize. Optional `device` on `open`. Default remains desktop.
+
+### Fixed
+
+- Compact `web_search` results keep full URLs instead of truncating them at 50 characters.
 
 ## 3.2.0 - 2026-09-14
 
