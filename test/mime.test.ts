@@ -41,6 +41,7 @@ async function main() {
 		"content-type": "text/plain; charset=utf-8",
 	});
 	const plainDecoded = await readBodyCapped(plainResp, 1024);
+	assert.equal(Buffer.from(plainDecoded.raw).toString("utf8"), mention);
 	assert.equal(
 		plainDecoded.text,
 		mention,

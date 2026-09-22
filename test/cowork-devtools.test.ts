@@ -6,6 +6,8 @@ import type { Page } from "playwright-core";
 
 import {
 	emulateDevice,
+	coworkDevice,
+	captureCoworkScreenshot,
 	formatCdpJson,
 	isBlockedCdpMethod,
 	mobileDeviceMetrics,
@@ -98,6 +100,8 @@ const emulateCdp = {
 	once: () => {},
 	send: async (method: string, params?: Record<string, unknown>) => {
 		emulateSent.push({ method, params });
+		if (method === "Page.captureScreenshot") return { data: Buffer.from("png").toString("base64") };
+		if (method === "Page.getLayoutMetrics") return { cssContentSize: { x: 0, y: 0, width: 412, height: 1800 } };
 		return {};
 	},
 	detach: async () => {},
@@ -121,8 +125,17 @@ const mobileUa = emulateSent.find((entry) => entry.method === "Emulation.setUser
 assert.match(String(mobileUa?.params?.userAgent), /Mobile/);
 assert.equal((mobileUa?.params?.userAgentMetadata as { mobile?: boolean })?.mobile, true);
 
+assert.equal(coworkDevice(emulatePage), "mobile");
+assert.equal(coworkDevice({} as Page), "desktop", "new tabs must not inherit a false mobile label");
+assert.equal((await captureCoworkScreenshot(emulatePage)).toString(), "png");
+await captureCoworkScreenshot(emulatePage, true);
+assert.deepEqual(emulateSent.filter((entry) => entry.method === "Page.captureScreenshot").at(-1), {
+	method: "Page.captureScreenshot",
+	params: { format: "png", captureBeyondViewport: true, clip: { x: 0, y: 0, width: 412, height: 1800, scale: 1 } },
+});
 emulateSent.length = 0;
 await emulateDevice(emulatePage, "desktop");
+assert.equal(coworkDevice(emulatePage), "desktop");
 assert.ok(emulateSent.some((entry) => entry.method === "Emulation.clearDeviceMetricsOverride"));
 assert.equal(
 	emulateSent.find((entry) => entry.method === "Emulation.setUserAgentOverride")?.params?.userAgent,

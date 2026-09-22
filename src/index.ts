@@ -10,6 +10,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { refreshConfig } from "./config.js";
 import { clearHostFloors } from "./read/block.js";
+import { clearCookies } from "./read/cookies.js";
 import { clearCooldowns, installCloakLogFilter } from "./utils.js";
 import { registerWebSearch } from "./search/web-search.js";
 import { registerWebRead } from "./read/web-read.js";
@@ -51,6 +52,7 @@ export default function (pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => {
 		clearCooldowns();
 		clearHostFloors();
+		clearCookies();
 		refreshConfig(ctx.cwd, true);
 		setToolEnabled(pi, "search", config.search?.enabled !== false ? "on" : "off");
 		setToolEnabled(pi, "cowork", config.cowork?.enabled !== false ? "on" : "off");

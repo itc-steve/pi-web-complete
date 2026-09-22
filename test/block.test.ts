@@ -49,5 +49,7 @@ assert.equal(challengeFromHeaders({ get: () => null }), false);
 assert.equal(challengeFromHeaders(undefined), false);
 
 const notice = blockedNotice("https://a.example/", 403, "HTTP 403");
-assert.match(notice, /Challenge HTML omitted/);
+assert.match(notice, /^\[error\] wall\.challenge\n/);
+assert.match(notice, /https:\/\/a\.example\//);
+assert.match(notice, /next_action: Use web_cowork/);
 assert.match(notice, /web_cowork/);

@@ -7,6 +7,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { config, refreshConfig } from "../config.js";
 import { setReadStatus } from "../status.js";
+import { deadlineErrorFrom, ssrfError } from "./errors.js";
 import { pageOutline, selectExcerpts } from "./excerpts.js";
 import { readUrl } from "./pipeline.js";
 import { deslugify, slugifyFilename } from "./slug.js";
@@ -111,6 +112,19 @@ const webReadParameters = Type.Object({
 				"Supports ~/…. Preferred for multi-page vault scrapes — returns a short summary only.",
 		}),
 	),
+	archive: Type.Optional(
+		StringEnum(["auto", "never"] as const, {
+			description:
+				"On 404/410 or network failure, try the nearest Wayback snapshot (labeled). Default auto.",
+		}),
+	),
+	stitch: Type.Optional(
+		Type.Boolean({
+			description:
+				"Follow rel=next same-origin pages into one body (max 3 extra). Default false.",
+			default: false,
+		}),
+	),
 });
 
 async function executeWebRead(
@@ -199,6 +213,8 @@ async function executeWebRead(
 			timeoutMs,
 			headless,
 			signal,
+			archive: params.archive === "never" ? "never" : "auto",
+			stitch: Boolean(params.stitch),
 		});
 
 		const headerLines = [
@@ -325,6 +341,12 @@ async function executeWebRead(
 		};
 	} catch (err) {
 		setReadStatus(ctx.ui, null);
+		const msg = err instanceof Error ? err.message : String(err);
+		if (/SSRF blocked|Invalid URL|credentials in URL|privileged port/i.test(msg)) {
+			return { content: [{ type: "text", text: ssrfError(msg) }] };
+		}
+		const deadline = deadlineErrorFrom(err);
+		if (deadline) return { content: [{ type: "text", text: deadline }] };
 		throw err;
 	}
 }
@@ -337,6 +359,7 @@ const sharedGuidelines = [
 	"saveDir=~/vault/foo writes ~/vault/foo/<title-slug>.md and returns a short summary only",
 	"Use mode=browser when the user asks for CloakBrowser; otherwise prefer mode=auto",
 	"Prefer format=markdown; avoid format=html unless savePath/saveDir is set",
+	"archive=auto (default) retries dead links via Wayback; stitch=true joins rel=next pages",
 ];
 
 /** Register canonical web_read plus the common web_fetch alias. */

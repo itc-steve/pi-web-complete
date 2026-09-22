@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.3.0 - 2026-09-22
+
+### Added
+
+- `web_read` extracts PDF text (pdf-parse). Scanned/OCR PDFs still placeholder.
+- Dead links (404/410 or network failure) retry via Wayback (`archive=auto`, default). Snapshot age is labeled. `archive=never` skips.
+- Stable read errors: `[error] <code>` plus `next_action` for `wall.challenge`, `guard.ssrf`, `deadline.hit`.
+- CloakBrowser challenge cookies are reused on later HTTP fetches for that host (session jar, cleared on session start).
+- `stitch=true` follows same-origin `rel=next` for up to three extra pages.
+
+### Fixed
+
+- Cowork screenshots retain mobile emulation instead of restoring Playwright's stale desktop viewport. Device labels are per-tab; open/emulate include observed CSS viewport dimensions.
+- Cowork defaults to headless on Linux without display variables. Explicit headed requests fail early with guidance to use headless or provide a display server.
+
+### Changed
+
+- Footer chips are one line below the editor (not `setStatus` rows). Empty leftover keys are deleted so they cannot become blank footer lines. Reads, cowork, and used services share that single chip.
+
 ## 3.2.1 - 2026-09-17
 
 ### Added

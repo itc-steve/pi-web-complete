@@ -127,6 +127,9 @@ web_read({ url, query: "HTTP caching Cache-Control" })
 - `return: "full"`: complete main content, capped around 12k characters in chat.
 - `savePath` or `saveDir`: full extract goes to disk; chat receives a short summary.
 - `mode: "browser"`: force CloakBrowser rendering.
+- PDFs: text extraction when the file has a text layer. Scanned PDFs stay a short placeholder (no OCR).
+- Dead links: `archive=auto` (default) tries the nearest Wayback snapshot and labels its date. `archive=never` skips.
+- `stitch=true` joins same-origin `rel=next` pages (max three extra) with part markers.
 - GitHub issues and pull requests: clean bodies and comments through GitHub REST API; optional `GITHUB_TOKEN` or `GH_TOKEN` raises limits and enables private repositories.
 - Metadata when available: author, publication date, site, and language.
 - `maxBytes`: download cap with a 2 MB floor and 5 MB default; oversized bodies truncate instead of failing.
@@ -163,7 +166,7 @@ Legacy JSON paths remain supported when the new paths are absent: `~/.pi/agent/e
 
 ## Work together in an external or headless browser
 
-`web_cowork` keeps one persistent CloakBrowser session open. Default mode is an external desktop window shared by agent and user; set `headless` for automation. Headless is create-time only: a live session is reused even if a later `open` passes a different flag. Close first to switch. `wait` needs a visible window. Use `web_read` for one-shot extraction.
+`web_cowork` keeps one persistent CloakBrowser session open. Default mode is an external desktop window shared by agent and user; Linux without `DISPLAY`/`WAYLAND_DISPLAY` defaults to headless. Set `headless: true` for automation. Explicit `headless: false` without a display returns an actionable error (no virtual display is created). Headless is create-time only: a live session is reused even if a later `open` passes a different flag. Close first to switch. `wait` needs a visible window. Use `web_read` for one-shot extraction.
 
 ```text
 web_cowork({ action: "open", url: "https://example.com/login" })
@@ -201,6 +204,10 @@ Developer actions expose console and network capture, JavaScript evaluation, scr
 
 Cowork defaults to desktop Chrome. Resizing the window is not mobile: desktop Chromium ignores viewport meta, keeps `(hover: hover)` / `(pointer: fine)`, and sends a desktop UA. `action=emulate` is Chrome DevTools device mode:
 
+`open` and `emulate` report the observed CSS viewport, not just the preset. Screenshots use the same CDP session as emulation so capture cannot restore stale desktop metrics. Device labels follow the active tab; new tabs start desktop. A page without responsive viewport metadata can still have a wide mobile layout. Chrome Android emulation is not physical iPhone/Safari evidence.
+
+Real-browser regression check: `npx tsx test/cowork-browser.check.ts` (requires installed CloakBrowser; asserts CSS/media-query widths before/after screenshots and desktop restore).
+
 - `device=mobile` — Pixel 7 metrics with `mobile:true` (viewport meta, overlay scrollbars, text autosizing), touch events, and a mobile UA plus `Sec-CH-UA-Mobile`. Reloads so the server sees the new UA.
 - `device=desktop` — restore. Reloads.
 - Optional `device` on `open` so the first load is already mobile.
@@ -237,7 +244,7 @@ context7({ library: "/vercel/next.js/v14.3.0", query: "server actions form valid
 | Tool | Parameters |
 | --- | --- |
 | `web_search` | `query`, `numResults`, `backend`, `compact` |
-| `web_read` / `web_fetch` | `url`, `query`, `return`, `mode`, `format`, `onlyMainContent`, `maxChars`, `maxBytes`, `headless`, `savePath`, `saveDir` |
+| `web_read` / `web_fetch` | `url`, `query`, `return`, `mode`, `format`, `onlyMainContent`, `maxChars`, `maxBytes`, `headless`, `savePath`, `saveDir`, `archive`, `stitch` |
 | `web_cowork` | `action`, `url`, `mode`, `ref`, `role`, `name`, `selector`, `text`, `clear`, `fills`, `clickRef`, `key`, `deltaY`, `query`, `maxChars`, `message`, `timeoutMs`, `headless`, `pageIndex`, `expression`, `method`, `cdpParams`/`params`, `target`, `filter`, `fullPage`, `device` |
 | `context7` | `library`, `query`, `fast` |
 
@@ -262,7 +269,7 @@ context7({ library: "/vercel/next.js/v14.3.0", query: "server actions form valid
 - Node.js 20.18.1+ is required.
 - `postinstall` runs `cloakbrowser install` and stores stealth Chromium under `~/.cloakbrowser/`.
 - CloakBrowser checks for browser updates at launch. Tagged update logs are hidden because direct console output corrupts Pi's TUI; set `DEBUG=1` to show them or `CLOAKBROWSER_AUTO_UPDATE=false` to disable checks.
-- Footer status remains empty until a service is used. Successful providers accumulate as a sorted service list; active reads and cowork sessions show brief progress.
+- Status chip stays empty until a service is used. Successful providers accumulate as one sorted line below the editor; active reads and cowork share that same line.
 - Set `"showStatus": false` to disable footer updates.
 - Set `"read": { "headless": false }` or pass `headless: false` to show browser-rendered one-shot reads.
 

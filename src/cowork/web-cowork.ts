@@ -16,6 +16,7 @@ import { abortable } from "../utils.js";
 import {
 	type CoworkDevice,
 	emulateDevice,
+	captureCoworkScreenshot,
 	formatCdpJson,
 	sendCdpCommand,
 	takeCdpEvents,
@@ -181,7 +182,7 @@ const coworkParameters = Type.Object({
 	headless: Type.Optional(
 		Type.Boolean({
 			description:
-				"For action=open: run without a desktop window. Defaults to cowork.headless, then false. Applied only when creating a session; close first to switch.",
+				"For action=open: run without a desktop window. Defaults to cowork.headless, then headless on Linux without a display, otherwise false. Applied only when creating a session; close first to switch.",
 		}),
 	),
 	pageIndex: Type.Optional(
@@ -379,7 +380,6 @@ async function applyCoworkDevice(
 ): Promise<boolean> {
 	if (session.device === device) return false;
 	await emulateDevice(session.page, device, signal);
-	session.device = device;
 	return true;
 }
 
@@ -400,7 +400,7 @@ async function executeCowork(
 		case "open": {
 			if (!params.url?.trim()) throw new Error("action=open requires url");
 			progress(ctx, onUpdate, "🌐 cowork: opening…");
-			const headless = params.headless ?? config.cowork?.headless ?? false;
+			const headless = params.headless ?? config.cowork?.headless;
 			const session = await ensureCoworkSession({
 				userDataDir: coworkUserDataDir(),
 				downloadDir: coworkDownloadDir(),
@@ -409,6 +409,7 @@ async function executeCowork(
 			const { page } = session;
 			if (params.device) await applyCoworkDevice(session, params.device, signal);
 			const nav = await navigateCoworkPage(page, params.url.trim(), undefined, signal);
+			const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
 			const observation = await postActionSnapshot(page);
 			progress(ctx, onUpdate, `🌐 cowork: ${nav.title || nav.url}`);
 			return textResult(
@@ -416,7 +417,7 @@ async function executeCowork(
 					session.headless
 						? `Opened headless CloakBrowser.`
 						: `Opened external CloakBrowser window.`,
-					`Device: ${session.device}`,
+					`Device: ${session.device}; CSS viewport: ${viewport.width}×${viewport.height}`,
 					`Title: ${nav.title || "(none)"}`,
 					`URL: ${nav.url}`,
 					`HTTP: ${nav.status}`,
@@ -429,6 +430,7 @@ async function executeCowork(
 					open: true,
 					headless: session.headless,
 					device: session.device,
+					viewport,
 					refCount: observation.refs.length,
 				},
 			);
@@ -443,7 +445,6 @@ async function executeCowork(
 			const { page } = session;
 			const changed = session.device !== params.device;
 			await emulateDevice(page, params.device, signal);
-			session.device = params.device;
 			session.takeBlockedUrlError();
 			try {
 				await abortable(page.reload({ waitUntil: "load", timeout: 60_000 }), signal);
@@ -456,6 +457,7 @@ async function executeCowork(
 			}
 			const blocked = session.takeBlockedUrlError();
 			if (blocked) throw new Error(blocked);
+			const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
 			const observation = await postActionSnapshot(page);
 			progress(ctx, onUpdate, `🌐 cowork: ${await page.title().catch(() => page.url())}`);
 			return textResult(
@@ -463,7 +465,7 @@ async function executeCowork(
 					params.device === "mobile"
 						? "Emulating Chrome Android (Pixel 7, mobile:true). Reloaded so the server sees mobile UA/client hints."
 						: "Restored desktop Chrome. Reloaded.",
-					`Device: ${session.device}`,
+					`Device: ${session.device}; CSS viewport: ${viewport.width}×${viewport.height}`,
 					`URL: ${page.url()}`,
 					``,
 					observation.text,
@@ -471,6 +473,7 @@ async function executeCowork(
 				{
 					action: "emulate",
 					device: session.device,
+					viewport,
 					changed,
 					url: page.url(),
 					open: true,
@@ -869,7 +872,7 @@ async function executeCowork(
 		case "screenshot": {
 			const { page } = await requireCoworkSession();
 			const image = await abortable(
-				page.screenshot({ type: "png", fullPage: params.fullPage === true }),
+				captureCoworkScreenshot(page, params.fullPage === true, signal),
 				signal,
 			);
 			const dir = join(homedir(), ".cloakbrowser", "cowork-shots");

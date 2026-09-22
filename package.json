@@ -1,6 +1,6 @@
 {
   "name": "@itc-steve/pi-web-complete",
-  "version": "3.2.1",
+  "version": "3.3.0",
   "description": "Pi extension: multi-backend web_search, local web_read with query-ranked excerpts, and web_cowork shared browser control.",
   "keywords": [
     "pi-package",
@@ -69,6 +69,7 @@
     "cloakbrowser": "^0.4.11",
     "impit": "^0.14.1",
     "linkedom": "^0.18.12",
+    "pdf-parse": "^2.4.5",
     "playwright-core": "^1.60.0",
     "tsx": "^4.23.3",
     "turndown": "^7.2.4",

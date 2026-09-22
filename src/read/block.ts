@@ -1,5 +1,7 @@
 /** Block detection + per-host climb floor (WebReaper ADR-0083, trimmed). */
 
+import { challengeError } from "./errors.js";
+
 export type LoadTier = "fast" | "fingerprint" | "browser";
 export type BlockConfidence = "none" | "weak" | "high";
 
@@ -82,8 +84,5 @@ export function shouldRefuseResidual(verdict: BlockVerdict, extractedChars: numb
 }
 
 export function blockedNotice(url: string, status: number, reason: string): string {
-	return (
-		`Blocked: ${url} still looks like a challenge page after HTTP, TLS fingerprint, and CloakBrowser ` +
-		`(${reason}; HTTP ${status}). Challenge HTML omitted. Use web_cowork if a human must pass the check.`
-	);
+	return challengeError(url, status, reason);
 }

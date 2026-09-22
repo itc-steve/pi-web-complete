@@ -4,6 +4,7 @@ import type { BrowserContext } from "playwright-core";
 import { installBrowserUrlGuard } from "../browser-guard.js";
 import { config } from "../config.js";
 import { validateUrl, timeoutSignal } from "../utils.js";
+import { rememberCookies } from "./cookies.js";
 import { cloakDownloadLaunchOptions, resolveDownloadDir } from "./downloads.js";
 
 export interface BrowserRenderResult {
@@ -129,6 +130,21 @@ export async function renderWithCloakBrowser(
 			const finalUrl = page.url();
 			const finalSsrf = validateUrl(finalUrl);
 			if (finalSsrf) throw new Error(finalSsrf);
+
+			try {
+				const cookiesFn = (
+					context as unknown as {
+						cookies?: () => Promise<
+							Array<{ name: string; value: string; domain?: string; path?: string }>
+						>;
+					}
+				).cookies;
+				if (typeof cookiesFn === "function") {
+					rememberCookies(finalUrl || url, await cookiesFn.call(context));
+				}
+			} catch {
+				// cloak context may not expose cookies()
+			}
 
 			let html = "";
 			for (let attempt = 0; attempt < 4; attempt++) {

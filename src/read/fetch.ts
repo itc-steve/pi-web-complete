@@ -3,6 +3,7 @@
 import { fetch } from "undici";
 import { fetchWithSafeRedirects, hopHeaders, timeoutSignal } from "../utils.js";
 import { challengeFromHeaders } from "./block.js";
+import { cookieHeaderFor } from "./cookies.js";
 import { fetchWithMetaRefresh } from "./hints.js";
 
 export interface FetchResult {
@@ -12,6 +13,7 @@ export interface FetchResult {
 	contentType: string;
 	html: string;
 	bytes: number;
+	raw?: Uint8Array;
 	truncated?: boolean;
 	challengeHeader?: boolean;
 }
@@ -63,7 +65,7 @@ export async function readBodyCapped(
     headers?: { get: (n: string) => string | null };
   },
   maxBytes: number,
-): Promise<{ text: string; bytes: number; truncated: boolean }> {
+): Promise<{ text: string; bytes: number; truncated: boolean; raw: Uint8Array }> {
   const body = response.body;
   const contentType = response.headers?.get("content-type") ?? "";
 
@@ -79,6 +81,7 @@ export async function readBodyCapped(
       text,
       bytes: Math.min(ab.byteLength, maxBytes + (truncated ? 1 : 0)),
       truncated,
+      raw,
     };
   }
 
@@ -117,11 +120,12 @@ export async function readBodyCapped(
     }
   }
 
-  const raw = Buffer.concat(chunks.map((c) => Buffer.from(c)));
-  const charset = resolveCharset(contentType, new Uint8Array(raw));
-  const text = decodeBuffer(raw, charset);
+  const buf = Buffer.concat(chunks.map((c) => Buffer.from(c)));
+  const raw = new Uint8Array(buf);
+  const charset = resolveCharset(contentType, raw);
+  const text = decodeBuffer(buf, charset);
 
-  return { text, bytes: total, truncated };
+  return { text, bytes: total, truncated, raw };
 }
 
 /** Decode a buffer using the given charset label. Falls back to utf-8. */
@@ -148,25 +152,27 @@ async function fetchUrlOnce(
 	const maxBytes = resolveMaxBytes(options.maxBytes);
 	const signal = timeoutSignal(options.signal, options.timeoutMs);
 
-	const { response, finalUrl } = await fetchWithSafeRedirects(url, (current, { crossOrigin }) =>
-		fetch(current, {
+	const { response, finalUrl } = await fetchWithSafeRedirects(url, (current, { crossOrigin }) => {
+		const jar = cookieHeaderFor(current);
+		return fetch(current, {
 			method: "GET",
 			headers: hopHeaders(
 				{
 					"user-agent": DEFAULT_UA,
 					accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 					"accept-language": "en-US,en;q=0.9",
+					...(jar ? { cookie: jar } : {}),
 					...options.headers,
 				},
 				crossOrigin,
 			),
 			redirect: "manual",
 			signal,
-		}),
-	);
+		});
+	});
 
 	const contentType = response.headers.get("content-type") ?? "text/html";
-	const { text, bytes, truncated } = await readBodyCapped(response, maxBytes);
+	const { text, bytes, truncated, raw } = await readBodyCapped(response, maxBytes);
 
 	return {
 		url: originalUrl,
@@ -175,6 +181,7 @@ async function fetchUrlOnce(
 		contentType,
 		html: text,
 		bytes,
+		raw,
 		truncated,
 		challengeHeader: challengeFromHeaders(response.headers),
 	};

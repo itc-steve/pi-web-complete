@@ -23,6 +23,11 @@ import {
 	type LoadTier,
 } from "./block.js";
 import type { BrowserRenderResult } from "./browser.js";
+import { archiveBanner, findWaybackSnapshot, isDeadStatus } from "./archive.js";
+import { cookieHeaderFor } from "./cookies.js";
+import { isAbortError } from "./errors.js";
+import { extractPdfText } from "./pdf.js";
+import { MAX_STITCH_PAGES, findRelNext, stitchPartMarker } from "./stitch.js";
 
 export interface ReadOptions {
 	mode?: ReadMode;
@@ -40,6 +45,10 @@ export interface ReadOptions {
 	/** CloakBrowser headless mode. Default true. */
 	headless?: boolean;
 	signal?: AbortSignal;
+	/** Wayback on 404/410 and network failure. Default auto. */
+	archive?: "auto" | "never";
+	/** Follow rel=next up to 3 extra pages. Default false. */
+	stitch?: boolean;
 }
 
 export interface ReadResult {
@@ -310,7 +319,23 @@ export function contentFromAlternateBody(
 	return truncate(text, maxChars);
 }
 
-function fromFetch(fetched: FetchResult, mode: string, options: MatOpts): ReadResult {
+async function fromFetch(fetched: FetchResult, mode: string, options: MatOpts): Promise<ReadResult> {
+	if (isPdfContent(fetched.contentType, fetched.html)) {
+		const extracted = fetched.raw?.byteLength ? await extractPdfText(fetched.raw) : "";
+		if (extracted) {
+			const content = truncate(extracted, options.maxChars);
+			return {
+				url: fetched.url,
+				finalUrl: fetched.finalUrl,
+				title: titleFromUrl(fetched.finalUrl || fetched.url),
+				mode: `${mode}+pdf`,
+				format: options.format,
+				content,
+				status: fetched.status,
+				chars: content.length,
+			};
+		}
+	}
 	// Non-HTML / PDF: skip Readability + turndown; reuse alternate-body path.
 	if (isRawBody(fetched.contentType, fetched.html)) {
 		const content = contentFromAlternateBody(
@@ -439,6 +464,163 @@ async function maybeFollowAlternates(
 	return best;
 }
 
+function isArchiveHost(url: string): boolean {
+	try {
+		const host = new URL(url).hostname;
+		return host === "web.archive.org" || host === "archive.org" || host.endsWith(".archive.org");
+	} catch {
+		return false;
+	}
+}
+
+function isNetworkFail(err: unknown): boolean {
+	if (isAbortError(err)) return false;
+	const msg = err instanceof Error ? err.message : String(err);
+	if (/SSRF blocked|Invalid URL|Too many redirects|credentials in URL|privileged port/i.test(msg)) {
+		return false;
+	}
+	return true;
+}
+
+async function readArchived(
+	url: string,
+	mode: string,
+	mat: MatOpts,
+): Promise<{ result: ReadResult; html: string } | null> {
+	if (isArchiveHost(url)) return null;
+	const snap = await findWaybackSnapshot(url, { signal: mat.signal });
+	if (!snap) return null;
+	try {
+		const fetched = await fetchUrl(snap.snapshotUrl, {
+			signal: mat.signal,
+			timeoutMs: mat.timeoutMs,
+			maxBytes: mat.maxBytes,
+		});
+		if (isDeadStatus(fetched.status)) return null;
+		const result = await fromFetch(fetched, `${mode}+archive`, mat);
+		const content = `${archiveBanner(snap.timestamp, snap.snapshotUrl)}\n\n${result.content}`;
+		return {
+			result: { ...result, url, content, chars: content.length },
+			html: fetched.html,
+		};
+	} catch {
+		return null;
+	}
+}
+
+async function bounceWithCookies(
+	url: string,
+	mat: MatOpts,
+): Promise<{ result: ReadResult; html: string } | null> {
+	if (!cookieHeaderFor(url)) return null;
+	try {
+		const fetched = await fetchUrl(url, {
+			signal: mat.signal,
+			timeoutMs: mat.timeoutMs,
+			maxBytes: mat.maxBytes,
+		});
+		const fast = extractFast(fetched.html);
+		const verdict = detectBlock(
+			fetched.status,
+			fetched.html,
+			fast.text,
+			fetched.challengeHeader,
+		);
+		if (verdict.confidence === "high") return null;
+		const result = await fromFetch(fetched, "cookie-bounce", mat);
+		if (shouldRefuseResidual(verdict, result.chars)) return null;
+		return { result, html: fetched.html };
+	} catch {
+		return null;
+	}
+}
+
+async function maybeStitchPages(
+	result: ReadResult,
+	html: string,
+	mat: MatOpts,
+): Promise<ReadResult> {
+	const parts = [result.content];
+	const seen = new Set<string>([result.finalUrl, result.url]);
+	let currentHtml = html;
+	let currentUrl = result.finalUrl || result.url;
+	for (let i = 0; i < MAX_STITCH_PAGES; i++) {
+		const next = findRelNext(currentHtml, currentUrl);
+		if (!next || seen.has(next)) break;
+		seen.add(next);
+		try {
+			const fetched = await fetchUrl(next, {
+				signal: mat.signal,
+				timeoutMs: mat.timeoutMs,
+				maxBytes: mat.maxBytes,
+			});
+			if (isDeadStatus(fetched.status) || isPdfContent(fetched.contentType, fetched.html)) {
+				break;
+			}
+			const page = await fromFetch(fetched, "stitch", mat);
+			parts.push(stitchPartMarker(i + 2, page.finalUrl) + page.content);
+			currentHtml = fetched.html;
+			currentUrl = page.finalUrl || next;
+		} catch {
+			break;
+		}
+	}
+	if (parts.length === 1) return result;
+	const content = truncate(parts.join(""), mat.maxChars);
+	return { ...result, content, chars: content.length, mode: `${result.mode}+stitch` };
+}
+
+async function finalize(
+	result: ReadResult,
+	html: string,
+	mat: MatOpts,
+	stitch: boolean,
+): Promise<ReadResult> {
+	const out = await maybeFollowAlternates(result, html, mat);
+	if (
+		!stitch ||
+		out.mode === "blocked" ||
+		out.mode.includes("pdf") ||
+		out.mode.includes("raw")
+	) {
+		return out;
+	}
+	return maybeStitchPages(out, html, mat);
+}
+
+async function climbBrowser(
+	url: string,
+	rendered: BrowserRenderResult,
+	mat: MatOpts,
+	format: ReadFormat,
+	onlyMainContent: boolean,
+	removeImages: boolean,
+	climbFromHigh: boolean,
+	stitch: boolean,
+): Promise<ReadResult> {
+	const preview = pageFromBrowser(
+		url,
+		rendered,
+		mat,
+		format,
+		onlyMainContent,
+		removeImages,
+		climbFromHigh,
+	);
+	const bounced = await bounceWithCookies(url, mat);
+	let chosen = preview;
+	let html = rendered.html;
+	if (
+		bounced &&
+		(preview.mode === "blocked" || bounced.result.chars >= preview.chars)
+	) {
+		chosen = bounced.result;
+		html = bounced.html;
+	}
+	if (chosen.mode === "blocked") return chosen;
+	return finalize(chosen, html, mat, stitch);
+}
+
 export async function readUrl(url: string, options: ReadOptions = {}): Promise<ReadResult> {
 	const mode = options.mode ?? "auto";
 	const format = options.format ?? "markdown";
@@ -448,6 +630,8 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 	const maxBytes = options.maxBytes;
 	const headless = options.headless !== false;
 	const signal = options.signal;
+	const stitch = Boolean(options.stitch);
+	const archiveOn = options.archive !== "never";
 	const matOpts: MatOpts = {
 		format,
 		onlyMainContent,
@@ -458,6 +642,9 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 		signal,
 	};
 	const browserOpts = { signal, timeoutMs, headless };
+
+	const tryArchive = async (modeName: string) =>
+		archiveOn ? readArchived(url, modeName, matOpts) : null;
 
 	// GitHub issues/PRs: REST API beats HTML chrome (unless mode=browser forces render).
 	if (mode !== "browser") {
@@ -474,7 +661,7 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 
 	if (mode === "browser" || autoFloor === "browser") {
 		const rendered = await renderWithCloakBrowser(url, browserOpts);
-		const preview = pageFromBrowser(
+		const climbed = await climbBrowser(
 			url,
 			rendered,
 			matOpts,
@@ -482,6 +669,7 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 			onlyMainContent,
 			removeImages,
 			autoFloor === "browser",
+			stitch,
 		);
 
 		// Forced browser: community sites often redirect CloakBrowser to SSO
@@ -489,8 +677,8 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 		// proved HTTP is blocked (host-sticky floor).
 		if (
 			mode === "browser" &&
-			preview.mode !== "blocked" &&
-			(preview.chars < 1500 || /log\s*in|sign\s*up|sso|exclusive benefits/i.test(preview.content))
+			climbed.mode !== "blocked" &&
+			(climbed.chars < 1500 || /log\s*in|sign\s*up|sso|exclusive benefits/i.test(climbed.content))
 		) {
 			try {
 				const http = await fetchUrl(url, { signal, timeoutMs, maxBytes });
@@ -502,12 +690,13 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 					http.challengeHeader,
 				);
 				if (httpBlock.confidence !== "high") {
-					const httpResult = await maybeFollowAlternates(
-						fromFetch(http, "browser-fallback-fast", matOpts),
+					const httpResult = await finalize(
+						await fromFetch(http, "browser-fallback-fast", matOpts),
 						http.html,
 						matOpts,
+						stitch,
 					);
-					if (httpResult.chars > preview.chars * 1.5) {
+					if (httpResult.chars > climbed.chars * 1.5) {
 						return httpResult;
 					}
 				}
@@ -516,22 +705,46 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 			}
 		}
 
-		if (preview.mode === "blocked") return preview;
-		return maybeFollowAlternates(preview, rendered.html, matOpts);
+		return climbed;
 	}
 
 	if (mode === "fingerprint") {
-		const fetched = await fingerprintFetch(url, { signal, timeoutMs, maxBytes });
-		return maybeFollowAlternates(fromFetch(fetched, "fingerprint", matOpts), fetched.html, matOpts);
+		try {
+			const fetched = await fingerprintFetch(url, { signal, timeoutMs, maxBytes });
+			if (isDeadStatus(fetched.status)) {
+				const archived = await tryArchive("fingerprint");
+				if (archived) return finalize(archived.result, archived.html, matOpts, stitch);
+			}
+			return finalize(await fromFetch(fetched, "fingerprint", matOpts), fetched.html, matOpts, stitch);
+		} catch (err) {
+			if (archiveOn && isNetworkFail(err)) {
+				const archived = await tryArchive("fingerprint");
+				if (archived) return finalize(archived.result, archived.html, matOpts, stitch);
+			}
+			throw err;
+		}
 	}
 
 	// fast / readable / auto start with undici, unless auto already knows this host needs fingerprint.
 	const startedAt: LoadTier =
 		mode === "auto" && autoFloor === "fingerprint" ? "fingerprint" : "fast";
-	const fastFetch =
-		startedAt === "fingerprint"
-			? await fingerprintFetch(url, { signal, timeoutMs, maxBytes })
-			: await fetchUrl(url, { signal, timeoutMs, maxBytes });
+	let fastFetch: FetchResult;
+	try {
+		fastFetch =
+			startedAt === "fingerprint"
+				? await fingerprintFetch(url, { signal, timeoutMs, maxBytes })
+				: await fetchUrl(url, { signal, timeoutMs, maxBytes });
+	} catch (err) {
+		if (archiveOn && isNetworkFail(err)) {
+			const archived = await tryArchive(mode === "auto" ? "fast" : mode);
+			if (archived) return finalize(archived.result, archived.html, matOpts, stitch);
+		}
+		throw err;
+	}
+	if (isDeadStatus(fastFetch.status)) {
+		const archived = await tryArchive(mode === "auto" ? "fast" : mode);
+		if (archived) return finalize(archived.result, archived.html, matOpts, stitch);
+	}
 
 	// PDF only: skip signal analysis, alternates, and browser. Other non-HTML
 	// (text/plain, JSON, mislabeled HTML) still enters the recovery ladder so
@@ -553,7 +766,7 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 	);
 
 	if (mode === "fast") {
-		return maybeFollowAlternates(fromFetch(fastFetch, "fast", matOpts), fastFetch.html, matOpts);
+		return finalize(await fromFetch(fastFetch, "fast", matOpts), fastFetch.html, matOpts, stitch);
 	}
 
 	if (mode === "readable") {
@@ -586,12 +799,13 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 				fastFetch.html,
 				fastFetch.finalUrl || fastFetch.url,
 			);
-			return maybeFollowAlternates(result, fastFetch.html, matOpts);
+			return finalize(result, fastFetch.html, matOpts, stitch);
 		}
-		return maybeFollowAlternates(
-			fromFetch(fastFetch, "readable-fallback-fast", matOpts),
+		return finalize(
+			await fromFetch(fastFetch, "readable-fallback-fast", matOpts),
 			fastFetch.html,
 			matOpts,
+			stitch,
 		);
 	}
 
@@ -606,18 +820,15 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 			const fpSignals = analyzeSignals(fp.status, fp.html, fpFast.text, fp.challengeHeader);
 			if (!fpSignals.blockedLikely && !fpSignals.sparseDom) {
 				if (signals.highBlock) liftHostFloor(url, "fingerprint");
-				return maybeFollowAlternates(
-					fromFetch(fp, "fingerprint", matOpts),
-					fp.html,
-					matOpts,
-				);
+				return finalize(await fromFetch(fp, "fingerprint", matOpts), fp.html, matOpts, stitch);
 			}
 			if (fpSignals.spaLikely || fpSignals.sparseDom || fpSignals.blockedLikely) {
 				// Try alternates on the fingerprint HTML before launching a browser.
-				const fpResult = await maybeFollowAlternates(
-					fromFetch(fp, "fingerprint", matOpts),
+				const fpResult = await finalize(
+					await fromFetch(fp, "fingerprint", matOpts),
 					fp.html,
 					matOpts,
+					stitch,
 				);
 				if (!isThinContent(fpResult.chars) && !fpSignals.blockedLikely) {
 					return fpResult;
@@ -634,7 +845,7 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 
 				try {
 					const rendered = await renderWithCloakBrowser(url, browserOpts);
-					const climbed = pageFromBrowser(
+					return climbBrowser(
 						url,
 						rendered,
 						matOpts,
@@ -642,9 +853,8 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 						onlyMainContent,
 						removeImages,
 						signals.highBlock || fpSignals.highBlock,
+						stitch,
 					);
-					if (climbed.mode === "blocked") return climbed;
-					return climbed;
 				} catch {
 					const fpVerdict = detectBlock(fp.status, fp.html, fpFast.text, fp.challengeHeader);
 					if (shouldRefuseResidual(fpVerdict, fpResult.chars)) {
@@ -654,7 +864,7 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 				}
 			}
 			if (signals.highBlock && !fpSignals.highBlock) liftHostFloor(url, "fingerprint");
-			return maybeFollowAlternates(fromFetch(fp, "fingerprint", matOpts), fp.html, matOpts);
+			return finalize(await fromFetch(fp, "fingerprint", matOpts), fp.html, matOpts, stitch);
 		} catch {
 			// fall through to readable/browser on fingerprint failure
 		}
@@ -662,10 +872,11 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 
 	if (signals.sparseDom || signals.textLength < 800) {
 		// Alternates first — often cheaper and better than Readability on empty shells.
-		const altResult = await maybeFollowAlternates(
-			fromFetch(fastFetch, "fast", matOpts),
+		const altResult = await finalize(
+			await fromFetch(fastFetch, "fast", matOpts),
 			fastFetch.html,
 			matOpts,
+			stitch,
 		);
 		if (!isThinContent(altResult.chars) && altResult.mode.includes("alternate")) {
 			return altResult;
@@ -703,7 +914,7 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 					fastFetch.html,
 					fastFetch.finalUrl || fastFetch.url,
 				);
-				return maybeFollowAlternates(result, fastFetch.html, matOpts);
+				return finalize(result, fastFetch.html, matOpts, stitch);
 			}
 		}
 
@@ -716,7 +927,7 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 
 			try {
 				const rendered = await renderWithCloakBrowser(url, browserOpts);
-				const climbed = pageFromBrowser(
+				return climbBrowser(
 					url,
 					rendered,
 					matOpts,
@@ -724,9 +935,8 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 					onlyMainContent,
 					removeImages,
 					signals.highBlock,
+					stitch,
 				);
-				if (climbed.mode === "blocked") return climbed;
-				return climbed;
 			} catch {
 				// Auto ladder must degrade to the best HTTP result, not throw.
 				return altResult;
@@ -736,9 +946,5 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 		return altResult;
 	}
 
-	return maybeFollowAlternates(
-		fromFetch(fastFetch, "fast", matOpts),
-		fastFetch.html,
-		matOpts,
-	);
+	return finalize(await fromFetch(fastFetch, "fast", matOpts), fastFetch.html, matOpts, stitch);
 }

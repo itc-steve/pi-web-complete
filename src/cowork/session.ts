@@ -14,6 +14,7 @@ import {
 } from "../read/downloads.js";
 import {
 	type CoworkDevice,
+	coworkDevice,
 	installDevtoolsBuffers,
 	resetDevtools,
 } from "./devtools.js";
@@ -65,6 +66,14 @@ export function coworkWaitError(status: { open?: boolean; headless?: boolean }):
 		return "action=wait needs a visible cowork window. Close and reopen without headless, or use snapshot/evaluate.";
 	}
 	return null;
+}
+
+export function resolveCoworkHeadless(requested?: boolean, platform = process.platform, env = process.env): boolean {
+	const noDisplay = platform === "linux" && !env.DISPLAY && !env.WAYLAND_DISPLAY;
+	if (requested === false && noDisplay) {
+		throw new Error("Headed Cowork needs DISPLAY or WAYLAND_DISPLAY. Use headless:true, or provide a working display server.");
+	}
+	return requested ?? noDisplay;
 }
 
 function expandHome(path: string): string {
@@ -181,7 +190,6 @@ export async function ensureCoworkSession(options: {
 }): Promise<CoworkSession> {
 	const userDataDir = resolveUserDataDir(options.userDataDir);
 	const downloadDir = resolveDownloadDir(options.downloadDir);
-	const headless = options.headless === true;
 
 	if (session) {
 		const alive = (await isContextAlive(session.context)) && recoverActivePage(session);
@@ -192,6 +200,7 @@ export async function ensureCoworkSession(options: {
 		await clearSession();
 	}
 
+	const headless = resolveCoworkHeadless(options.headless);
 	mkdirSync(userDataDir, { recursive: true });
 	ensureChromeDownloadPrefs(userDataDir, downloadDir);
 	const downloadOpts = cloakDownloadLaunchOptions(downloadDir);
@@ -213,7 +222,7 @@ export async function ensureCoworkSession(options: {
 		page,
 		userDataDir,
 		headless,
-		device: "desktop",
+		get device() { return coworkDevice(this.page); },
 		takeBlockedUrlError,
 	};
 	return session;

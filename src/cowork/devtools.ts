@@ -47,6 +47,7 @@ interface PageBuffers {
 let buffers = new WeakMap<Page, PageBuffers>();
 let installed = new WeakSet<Page>();
 let pageSessions = new WeakMap<Page, CDPSession>();
+let pageDevices = new WeakMap<Page, CoworkDevice>();
 let browserSessions = new WeakMap<BrowserContext, CDPSession>();
 let sessionEvents = new WeakMap<CDPSession, CdpEvent[]>();
 const liveSessions = new Set<CDPSession>();
@@ -257,6 +258,7 @@ export async function resetDevtools(): Promise<void> {
 	buffers = new WeakMap();
 	installed = new WeakSet();
 	pageSessions = new WeakMap();
+	pageDevices = new WeakMap();
 	browserSessions = new WeakMap();
 	sessionEvents = new WeakMap();
 }
@@ -265,6 +267,28 @@ export async function resetDevtools(): Promise<void> {
 export type CoworkDevice = "mobile" | "desktop";
 
 const PIXEL7 = devices["Pixel 7"];
+
+export function coworkDevice(page: Page): CoworkDevice {
+	return pageDevices.get(page) ?? "desktop";
+}
+
+/** Capture on the emulation session: Playwright's separate session can restore desktop metrics. */
+export async function captureCoworkScreenshot(page: Page, fullPage = false, signal?: AbortSignal): Promise<Buffer> {
+	const params: Record<string, unknown> = { format: "png", captureBeyondViewport: fullPage };
+	if (fullPage) {
+		const metrics = await sendCdpCommand(page, "page", "Page.getLayoutMetrics", {}, signal) as {
+			cssContentSize: { x: number; y: number; width: number; height: number };
+		};
+		params.clip = { ...metrics.cssContentSize, scale: 1 };
+	}
+	try {
+		const result = await sendCdpCommand(page, "page", "Page.captureScreenshot", params, signal) as { data: string };
+		return Buffer.from(result.data, "base64");
+	} finally {
+		// Chromium's full-page capture can reset touch media features when restoring its surface.
+		if (fullPage && coworkDevice(page) === "mobile") await emulateDevice(page, "mobile");
+	}
+}
 
 export function mobileDeviceMetrics(): Record<string, unknown> {
 	const { width, height } = PIXEL7.viewport;
@@ -323,6 +347,7 @@ export async function emulateDevice(
 			},
 			signal,
 		);
+		pageDevices.set(page, device);
 		return;
 	}
 
@@ -342,4 +367,5 @@ export async function emulateDevice(
 		signal,
 	);
 	await sendCdpCommand(page, "page", "Emulation.setUserAgentOverride", { userAgent: "" }, signal);
+	pageDevices.set(page, device);
 }
